@@ -44,6 +44,40 @@ declare global {
       isCharging: boolean;
       cycleCount: number;
     };
+    system: {
+      manufacturer?: string;
+      model?: string;
+      serial?: string;
+    };
+    graphics: {
+      controllers: Array<{
+        model?: string;
+        vram?: number;
+      }>;
+      displays: Array<{
+        model?: string;
+        resolutionX?: number;
+        resolutionY?: number;
+      }>;
+    };
+    user: {
+      username: string;
+      hostname: string;
+      homedir: string;
+      shell?: string;
+    };
+    network: {
+      defaultInterface?: string;
+      interfaces: Array<{
+        iface: string;
+        ip4?: string;
+        ip6?: string;
+        mac?: string;
+        type?: string;
+        speed?: number;
+        internal?: boolean;
+      }>;
+    };
   }
 
   interface AppMemoryInfo {
@@ -52,6 +86,8 @@ declare global {
     cpu: number;
     processCount: number;
     icon?: string;
+    path?: string;
+    isSystemApp?: boolean;
   }
 
   interface LocalNodeVersion {
@@ -75,12 +111,31 @@ declare global {
   systemPath: string | null;
 }
 
+  type PackageManagerName = 'npm' | 'pnpm';
+
+  interface PackageInfo {
+    name: string;
+    version: string;
+    description?: string;
+    homepage?: string;
+    path?: string;
+    author?: string;
+  }
+
+  interface PackageManagerPackagesResult {
+    manager: PackageManagerName;
+    global: PackageInfo[];
+    local: PackageInfo[];
+  }
+
   interface Window {
     electron: {
       getSystemInfo: () => Promise<SystemInfo>;
       getProcessInfo: () => Promise<any[]>;
       getAppMemoryInfo: () => Promise<AppMemoryInfo[]>;
+      uninstallApp: (path: string) => Promise<{ success: boolean; message?: string }>;
       getGitInfo: () => Promise<GitInfoData>;
+      getPackageManagers: () => Promise<PackageManagerPackagesResult[]>;
     };
     nodeManager: {
       getLocalVersions: () => Promise<NodeVersionsResult>;

@@ -1,9 +1,5 @@
 import React, { useEffect, useState } from 'react';
- 
-import { Cpu, HardDrive, Laptop, Activity, Battery, Info } from 'lucide-react';
-
-import ProcessList from './ProcessList';
-
+import { Cpu, HardDrive, Laptop, Activity, Battery, Info, Network, Monitor, User } from 'lucide-react';
 
 
 interface DeviceInfoProps {
@@ -13,7 +9,6 @@ interface DeviceInfoProps {
 const DeviceInfo: React.FC<DeviceInfoProps> = ({ showProcessList }) => {
   const [info, setInfo] = useState<SystemInfo | null>(null);
   const [loading, setLoading] = useState(true);
-
 
   useEffect(() => {
     const fetchInfo = async () => {
@@ -29,7 +24,6 @@ const DeviceInfo: React.FC<DeviceInfoProps> = ({ showProcessList }) => {
 
     fetchInfo();
   }, []);
-
 
   if (loading) {
     return (
@@ -53,101 +47,225 @@ const DeviceInfo: React.FC<DeviceInfoProps> = ({ showProcessList }) => {
     const k = 1024;
     const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB'];
     const i = Math.floor(Math.log(bytes) / Math.log(k));
-    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+    return `${parseFloat((bytes / Math.pow(k, i)).toFixed(2))} ${sizes[i]}`;
   };
+
+  const mainDisk = info.disk[0];
+  const mainGpu = info.graphics.controllers[0];
+  const display = info.graphics.displays[0];
+  const activeNet =
+    info.network.interfaces.find(n => !n.internal && n.ip4) ||
+    info.network.interfaces[0];
 
   return (
     <div className="p-6 space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
-      <div className="flex items-center justify-between">
-        <h2 className="text-2xl font-bold flex items-center gap-2">
-          <Laptop className="w-6 h-6 text-indigo-400" />
-          设备概览
-        </h2>
-        <span className="text-xs bg-indigo-500/10 text-indigo-400 px-2 py-1 rounded-full border border-indigo-500/20">
-          实时数据
-        </span>
+      <div className="bg-white border border-zinc-200 rounded-2xl p-6 flex flex-col md:flex-row items-center gap-6 shadow-sm">
+        <div className="flex-shrink-0 flex flex-col items-center">
+          <div className="w-40 h-24 rounded-2xl bg-gradient-to-br from-sky-200 to-sky-400 flex items-center justify-center">
+            <Laptop className="w-10 h-10 text-white" />
+          </div>
+        </div>
+        <div className="flex-1 space-y-2">
+          <div className="text-xs text-zinc-500">关于本机</div>
+          <div className="text-2xl font-semibold text-zinc-900">
+            {info.user.hostname}
+          </div>
+          <div className="text-sm text-zinc-600">
+            {info.system.manufacturer} {info.system.model}
+          </div>
+          <div className="mt-3 grid grid-cols-2 md:grid-cols-4 gap-3 text-xs text-zinc-600">
+            <div>
+              <div className="text-[11px] text-zinc-400">处理器</div>
+              <div className="font-medium">
+                {info.cpu.brand}
+              </div>
+            </div>
+            <div>
+              <div className="text-[11px] text-zinc-400">内存</div>
+              <div className="font-medium">
+                {formatBytes(info.mem.total)}
+              </div>
+            </div>
+            <div>
+              <div className="text-[11px] text-zinc-400">图形卡</div>
+              <div className="font-medium truncate">
+                {mainGpu?.model || '未知'}
+              </div>
+            </div>
+            <div>
+              <div className="text-[11px] text-zinc-400">系统版本</div>
+              <div className="font-medium">
+                {info.os.distro} {info.os.release}
+              </div>
+            </div>
+          </div>
+        </div>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-        <div className="bg-white/80 border border-zinc-200 p-5 rounded-2xl hover:border-indigo-500/30 transition-colors group shadow-sm">
-          <div className="flex items-start justify-between mb-4">
-            <div className="p-2 bg-indigo-500/10 rounded-lg group-hover:bg-indigo-500/20 transition-colors">
-              <Cpu className="w-5 h-5 text-indigo-400" />
-            </div>
-            <Activity className="w-4 h-4 text-zinc-600 group-hover:text-indigo-400 transition-colors" />
+        <div className="bg-white/80 border border-zinc-200 p-5 rounded-2xl shadow-sm">
+          <div className="flex items-center gap-2 mb-3">
+            <User className="w-5 h-5 text-indigo-400" />
+            <h3 className="text-sm font-semibold text-zinc-900">本机账号</h3>
           </div>
-          <h3 className="text-sm font-medium text-zinc-400 mb-1">处理器 (CPU)</h3>
-          <p className="text-lg font-semibold truncate">{info.cpu.manufacturer} {info.cpu.brand}</p>
-          <div className="mt-2 text-xs text-zinc-500">
-            核心数: {info.cpu.cores} | 基础频率: {info.cpu.speed}GHz
+          <div className="space-y-2 text-xs text-zinc-600">
+            <div className="flex justify-between">
+              <span className="text-zinc-400">用户名</span>
+              <span className="font-mono text-zinc-800">{info.user.username}</span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-zinc-400">主目录</span>
+              <span className="font-mono text-zinc-800 truncate max-w-[180px]">
+                {info.user.homedir}
+              </span>
+            </div>
+            {info.user.shell && (
+              <div className="flex justify-between">
+                <span className="text-zinc-400">Shell</span>
+                <span className="font-mono text-zinc-800 truncate max-w-[180px]">
+                  {info.user.shell}
+                </span>
+              </div>
+            )}
           </div>
         </div>
 
-        <div className="bg-white/80 border border-zinc-200 p-5 rounded-2xl hover:border-emerald-500/30 transition-colors group shadow-sm">
-          <div className="flex items-start justify-between mb-4">
-            <div className="p-2 bg-emerald-500/10 rounded-lg group-hover:bg-emerald-500/20 transition-colors">
-              <Activity className="w-5 h-5 text-emerald-400" />
+        <div className="bg-white/80 border border-zinc-200 p-5 rounded-2xl shadow-sm">
+          <div className="flex items-center gap-2 mb-3">
+            <Cpu className="w-5 h-5 text-emerald-400" />
+            <h3 className="text-sm font-semibold text-zinc-900">处理器与内存</h3>
+          </div>
+          <div className="space-y-2 text-xs text-zinc-600">
+            <div className="font-medium text-sm text-zinc-900">
+              {info.cpu.manufacturer} {info.cpu.brand}
             </div>
-          </div>
-          <h3 className="text-sm font-medium text-zinc-400 mb-1">内存 (RAM)</h3>
-          <p className="text-lg font-semibold">{formatBytes(info.mem.total)}</p>
-          <div className="mt-2 w-full bg-zinc-800 rounded-full h-1">
-            <div 
-              className="bg-emerald-500 h-1 rounded-full transition-all duration-1000" 
-              style={{ width: `${(info.mem.used / info.mem.total) * 100}%` }}
-            ></div>
-          </div>
-          <div className="mt-2 text-xs text-zinc-500">
-            已使用: {formatBytes(info.mem.used)} | 可用: {formatBytes(info.mem.free)}
+            <div>核心数：{info.cpu.cores} | 主频：{info.cpu.speed} GHz</div>
+            <div>内存总量：{formatBytes(info.mem.total)}</div>
+            <div className="mt-2">
+              <div className="w-full bg-zinc-100 rounded-full h-1.5 overflow-hidden">
+                <div
+                  className="bg-emerald-500 h-1.5 rounded-full transition-all duration-700"
+                  style={{ width: `${(info.mem.used / info.mem.total) * 100}%` }}
+                />
+              </div>
+              <div className="mt-1 text-[11px] text-zinc-500 flex justify-between">
+                <span>已用 {formatBytes(info.mem.used)}</span>
+                <span>可用 {formatBytes(info.mem.free)}</span>
+              </div>
+            </div>
           </div>
         </div>
 
-        <div className="bg-white/80 border border-zinc-200 p-5 rounded-2xl hover:border-amber-500/30 transition-colors group shadow-sm">
-          <div className="flex items-start justify-between mb-4">
-            <div className="p-2 bg-amber-500/10 rounded-lg group-hover:bg-amber-500/20 transition-colors">
-              <HardDrive className="w-5 h-5 text-amber-400" />
-            </div>
+        <div className="bg-white/80 border border-zinc-200 p-5 rounded-2xl shadow-sm">
+          <div className="flex items-center gap-2 mb-3">
+            <HardDrive className="w-5 h-5 text-amber-400" />
+            <h3 className="text-sm font-semibold text-zinc-900">存储与硬件</h3>
           </div>
-          <h3 className="text-sm font-medium text-zinc-400 mb-1">存储设备</h3>
-          <p className="text-lg font-semibold">{info.disk[0]?.name || '未知磁盘'}</p>
-          <div className="mt-2 text-xs text-zinc-500">
-            类型: {info.disk[0]?.type} | 接口: {info.disk[0]?.interfaceType}
+          <div className="space-y-2 text-xs text-zinc-600">
+            <div>
+              <div className="text-[11px] text-zinc-400">主硬盘</div>
+              <div className="font-medium text-sm text-zinc-900">
+                {mainDisk?.name || '未知磁盘'}
+              </div>
+              <div className="text-[11px] text-zinc-500">
+                类型：{mainDisk?.type || '-'} | 接口：{mainDisk?.interfaceType || '-'}
+              </div>
+            </div>
+            <div className="pt-1">
+              <div className="text-[11px] text-zinc-400">序列号</div>
+              <div className="font-mono text-xs text-zinc-800">
+                {info.system.serial || '不可用'}
+              </div>
+            </div>
           </div>
         </div>
 
-        <div className="bg-white/80 border border-zinc-200 p-5 rounded-2xl hover:border-sky-500/30 transition-colors group shadow-sm">
-          <div className="flex items-start justify-between mb-4">
-            <div className="p-2 bg-sky-500/10 rounded-lg group-hover:bg-sky-500/20 transition-colors">
-              <Info className="w-5 h-5 text-sky-400" />
-            </div>
+        <div className="bg-white/80 border border-zinc-200 p-5 rounded-2xl shadow-sm">
+          <div className="flex items-center gap-2 mb-3">
+            <Monitor className="w-5 h-5 text-sky-400" />
+            <h3 className="text-sm font-semibold text-zinc-900">显示与图形</h3>
           </div>
-          <h3 className="text-sm font-medium text-zinc-400 mb-1">操作系统</h3>
-          <p className="text-lg font-semibold">{info.os.distro}</p>
-          <div className="mt-2 text-xs text-zinc-500">
-            版本: {info.os.release} | 架构: {info.os.arch}
+          <div className="space-y-2 text-xs text-zinc-600">
+            <div>
+              <div className="text-[11px] text-zinc-400">图形卡</div>
+              <div className="font-medium text-sm text-zinc-900">
+                {mainGpu?.model || '未知图形卡'}
+              </div>
+            </div>
+            {display && (
+              <div>
+                <div className="text-[11px] text-zinc-400">主显示器</div>
+                <div className="font-medium text-sm text-zinc-900">
+                  {display.model || '内置显示器'}
+                </div>
+                <div className="text-[11px] text-zinc-500">
+                  分辨率：{display.resolutionX} × {display.resolutionY}
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+
+        <div className="bg-white/80 border border-zinc-200 p-5 rounded-2xl shadow-sm">
+          <div className="flex items-center gap-2 mb-3">
+            <Network className="w-5 h-5 text-indigo-400" />
+            <h3 className="text-sm font-semibold text-zinc-900">网络信息</h3>
+          </div>
+          <div className="space-y-2 text-xs text-zinc-600">
+            {activeNet ? (
+              <>
+                <div className="flex justify-between">
+                  <span className="text-zinc-400">接口</span>
+                  <span className="font-mono text-zinc-800">{activeNet.iface}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-zinc-400">IPv4</span>
+                  <span className="font-mono text-zinc-800">{activeNet.ip4 || '-'}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-zinc-400">MAC</span>
+                  <span className="font-mono text-zinc-800">{activeNet.mac || '-'}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-zinc-400">类型</span>
+                  <span className="text-zinc-800">
+                    {activeNet.type || '-'} {activeNet.internal ? '(内置)' : ''}
+                  </span>
+                </div>
+              </>
+            ) : (
+              <div className="text-zinc-500">未检测到有效网络接口</div>
+            )}
           </div>
         </div>
 
         {info.battery.hasBattery && (
-          <div className="bg-white/80 border border-zinc-200 p-5 rounded-2xl hover:border-rose-500/30 transition-colors group shadow-sm">
-            <div className="flex items-start justify-between mb-4">
-              <div className="p-2 bg-rose-500/10 rounded-lg group-hover:bg-rose-500/20 transition-colors">
-                <Battery className="w-5 h-5 text-rose-400" />
-              </div>
+          <div className="bg-white/80 border border-zinc-200 p-5 rounded-2xl shadow-sm">
+            <div className="flex items-center gap-2 mb-3">
+              <Battery className="w-5 h-5 text-rose-400" />
+              <h3 className="text-sm font-semibold text-zinc-900">电池信息</h3>
             </div>
-            <h3 className="text-sm font-medium text-zinc-400 mb-1">电池状态</h3>
-            <p className="text-lg font-semibold">{info.battery.percent}%</p>
-            <div className="mt-2 text-xs text-zinc-500">
-              {info.battery.isCharging ? '正在充电' : '放电中'} | 循环: {info.battery.cycleCount}
+            <div className="space-y-2 text-xs text-zinc-600">
+              <div className="flex items-center justify-between">
+                <span className="text-zinc-400">电量</span>
+                <span className="font-medium text-zinc-900">{info.battery.percent}%</span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-zinc-400">状态</span>
+                <span className="text-zinc-900">
+                  {info.battery.isCharging ? '正在充电' : '放电中'}
+                </span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-zinc-400">循环次数</span>
+                <span className="text-zinc-900">{info.battery.cycleCount}</span>
+              </div>
             </div>
           </div>
         )}
       </div>
-      {showProcessList && (
-        <div className="mt-6">
-          <ProcessList totalMem={info.mem.total} />
-        </div>
-      )}
+
+      
     </div>
   );
 };

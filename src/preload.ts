@@ -4,7 +4,9 @@ contextBridge.exposeInMainWorld('electron', {
   getSystemInfo: () => ipcRenderer.invoke('get-system-info'),
   getProcessInfo: () => ipcRenderer.invoke('get-process-info'),
   getAppMemoryInfo: () => ipcRenderer.invoke('get-app-memory'),
+  uninstallApp: (path: string) => ipcRenderer.invoke('uninstall-app', path),
   getGitInfo: () => ipcRenderer.invoke('get-git-info'),
+  getPackageManagers: () => ipcRenderer.invoke('package-manager:get-packages'),
 });
 
 contextBridge.exposeInMainWorld('nodeManager', {

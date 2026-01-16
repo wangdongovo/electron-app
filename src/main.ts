@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain } from 'electron';
+import { app, BrowserWindow, ipcMain, shell } from 'electron';
 import path from 'node:path';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -54,6 +54,24 @@ const createWindow = () => {
     },
   });
 
+  // Set dev Dock icon on macOS when running with Vite dev server
+  if (process.platform === 'darwin' && typeof MAIN_WINDOW_VITE_DEV_SERVER_URL !== 'undefined' && MAIN_WINDOW_VITE_DEV_SERVER_URL) {
+    try {
+      const candidates = [
+        path.resolve(process.cwd(), 'images/icon.png'),
+        path.resolve(process.cwd(), 'images/icon.icns'),
+      ];
+      for (const p of candidates) {
+        if (fs.existsSync(p)) {
+          app.dock.setIcon(p);
+          break;
+        }
+      }
+    } catch (err) {
+      console.error('Failed to set dev dock icon:', err);
+    }
+  }
+
   // and load the index.html of the app.
   if (MAIN_WINDOW_VITE_DEV_SERVER_URL) {
     mainWindow.loadURL(MAIN_WINDOW_VITE_DEV_SERVER_URL);
@@ -64,7 +82,7 @@ const createWindow = () => {
   }
 
   // Open the DevTools.
-   mainWindow.webContents.openDevTools();
+  mainWindow.webContents.openDevTools();
 };
 
 // This method will be called when Electron has finished
@@ -94,20 +112,36 @@ app.on('activate', () => {
 
 ipcMain.handle('get-system-info', async () => {
   try {
-    const [cpu, mem, os, disk, battery] = await Promise.all([
+    const [cpu, mem, osInfo, disk, battery, system, graphics, netIfs, netDefault] = await Promise.all([
       si.cpu(),
       si.mem(),
       si.osInfo(),
       si.diskLayout(),
       si.battery(),
+      si.system(),
+      si.graphics(),
+      si.networkInterfaces(),
+      si.networkInterfaceDefault().catch(() => ''),
     ]);
 
     return {
       cpu,
       mem,
-      os,
+      os: osInfo,
       disk,
       battery,
+      system,
+      graphics,
+      user: {
+        username: os.userInfo().username,
+        hostname: os.hostname(),
+        homedir: os.homedir(),
+        shell: os.userInfo().shell,
+      },
+      network: {
+        defaultInterface: netDefault || undefined,
+        interfaces: netIfs,
+      },
     };
   } catch (error) {
     console.error('Failed to get system info:', error);
@@ -139,16 +173,23 @@ const appIconCache = new Map<string, string>();
 ipcMain.handle('get-app-memory', async () => {
   try {
     const processes = await si.processes();
-    const map = new Map<
-      string,
-      {
-        name: string;
-        mem: number;
-        cpu: number;
-        processCount: number;
-        appPath?: string;
-      }
-    >();
+    const appDirs = [
+      '/Applications',
+      path.join(os.homedir(), 'Applications'),
+      '/System/Applications',
+    ];
+
+    type AppEntry = {
+      name: string;
+      path: string;
+      mem: number;
+      cpu: number;
+      processCount: number;
+      isSystemApp: boolean;
+      icon?: string;
+    };
+
+    const map = new Map<string, AppEntry>();
 
     const extractAppInfo = (pathStr: string, name: string) => {
       if (process.platform === 'darwin' && pathStr) {
@@ -158,7 +199,8 @@ ipcMain.handle('get-app-memory', async () => {
           const appName = appPath.split('/').pop() || name;
           const inApplications =
             appPath.startsWith('/Applications/') ||
-            appPath.startsWith('/System/Applications/');
+            appPath.startsWith('/System/Applications/') ||
+            appPath.startsWith(path.join(os.homedir(), 'Applications') + '/');
           return { appName, appPath, inApplications };
         }
       }
@@ -169,7 +211,7 @@ ipcMain.handle('get-app-memory', async () => {
       const rawPath = (p as any).path || '';
       const { appName, appPath, inApplications } = extractAppInfo(rawPath, p.name);
 
-      if (process.platform === 'darwin' && !inApplications) {
+      if (process.platform === 'darwin' && (!inApplications || !appPath)) {
         continue;
       }
 
@@ -185,40 +227,75 @@ ipcMain.handle('get-app-memory', async () => {
       } else {
         map.set(key, {
           name: appName,
+          path: appPath || key,
           mem,
           cpu,
           processCount: 1,
-          appPath: appPath || undefined,
+          isSystemApp: appPath.startsWith('/System/Applications/'),
         });
       }
     }
 
-    const aggregated = Array.from(map.values()).sort((a, b) => b.mem - a.mem);
-
-    for (const appInfo of aggregated) {
-      if (!appInfo.appPath) {
-        continue;
-      }
-      if (!appIconCache.has(appInfo.appPath)) {
-        try {
-          const icon = await app.getFileIcon(appInfo.appPath, { size: 'small' });
-          appIconCache.set(appInfo.appPath, icon.toDataURL());
-        } catch {
-          appIconCache.set(appInfo.appPath, '');
+    for (const dir of appDirs) {
+      if (!fs.existsSync(dir)) continue;
+      try {
+        const files = await fs.promises.readdir(dir);
+        for (const file of files) {
+          if (!file.endsWith('.app')) continue;
+          const appPath = path.join(dir, file);
+          const key = appPath;
+          if (map.has(key)) continue;
+          const name = file.replace(/\.app$/, '');
+          map.set(key, {
+            name,
+            path: appPath,
+            mem: 0,
+            cpu: 0,
+            processCount: 0,
+            isSystemApp: dir === '/System/Applications',
+          });
         }
+      } catch (e) {
+        console.error(`Failed to read dir ${dir}:`, e);
       }
     }
 
-    return aggregated.map(a => ({
-      name: a.name,
-      mem: a.mem,
-      cpu: a.cpu,
-      processCount: a.processCount,
-      icon: a.appPath ? appIconCache.get(a.appPath) ?? '' : '',
-    }));
+    const result = Array.from(map.values());
+
+    for (const appInfo of result) {
+      if (!appIconCache.has(appInfo.path)) {
+        try {
+          const icon = await app.getFileIcon(appInfo.path, { size: 'small' });
+          appIconCache.set(appInfo.path, icon.toDataURL());
+        } catch {
+          appIconCache.set(appInfo.path, '');
+        }
+      }
+      appInfo.icon = appIconCache.get(appInfo.path);
+    }
+
+    return result.sort((a, b) => {
+      if (a.mem > 0 && b.mem === 0) return -1;
+      if (a.mem === 0 && b.mem > 0) return 1;
+      if (a.mem !== b.mem) return b.mem - a.mem;
+      return a.name.localeCompare(b.name);
+    });
   } catch (error) {
     console.error('Failed to get app memory:', error);
     return [];
+  }
+});
+
+ipcMain.handle('uninstall-app', async (_event, appPath: string) => {
+  try {
+    await shell.trashItem(appPath);
+    return { success: true };
+  } catch (error: any) {
+    console.error('Failed to uninstall app:', error);
+    return {
+      success: false,
+      message: error?.message || '卸载失败，请在访达中手动删除该应用。',
+    };
   }
 });
 
@@ -263,6 +340,130 @@ ipcMain.handle('get-git-info', async () => {
       system: [],
     };
   }
+});
+
+type PackageManagerName = 'npm' | 'pnpm';
+
+type PackageInfo = {
+  name: string;
+  version: string;
+  description?: string;
+  homepage?: string;
+  path?: string;
+  author?: string;
+};
+
+type PackageManagerPackagesResult = {
+  manager: PackageManagerName;
+  global: PackageInfo[];
+  local: PackageInfo[];
+};
+
+const parseNpmLikeList = (jsonStr: string): PackageInfo[] => {
+  try {
+    const parsed = JSON.parse(jsonStr);
+    const result: PackageInfo[] = [];
+    const addDeps = (deps: Record<string, unknown>, basePath?: string) => {
+      Object.keys(deps).forEach(key => {
+        const raw = deps[key];
+        if (!raw || typeof raw !== 'object') return;
+        const item = raw as {
+          version?: string;
+          description?: string;
+          homepage?: string;
+          path?: string;
+          author?: string | { name?: string };
+        };
+        const author =
+          typeof item.author === 'string'
+            ? item.author
+            : item.author && typeof item.author === 'object'
+            ? item.author.name
+            : undefined;
+        const info: PackageInfo = {
+          name: key,
+          version: typeof item.version === 'string' ? item.version : '',
+          description: typeof item.description === 'string' ? item.description : undefined,
+          homepage: typeof item.homepage === 'string' ? item.homepage : undefined,
+          path: typeof item.path === 'string' ? item.path : basePath,
+          author,
+        };
+        result.push(info);
+      });
+    };
+
+    if (Array.isArray(parsed)) {
+      parsed.forEach(entry => {
+        if (!entry || typeof entry !== 'object') return;
+        const obj = entry as { dependencies?: Record<string, unknown>; path?: string; name?: string; version?: string };
+        if (obj.dependencies && typeof obj.dependencies === 'object') {
+          addDeps(obj.dependencies, obj.path);
+        } else if (obj.name && obj.version) {
+          result.push({
+            name: obj.name,
+            version: obj.version,
+            path: obj.path,
+          });
+        }
+      });
+    } else if (parsed && typeof parsed === 'object') {
+      const root = parsed as { dependencies?: Record<string, unknown>; path?: string };
+      if (root.dependencies && typeof root.dependencies === 'object') {
+        addDeps(root.dependencies, root.path);
+      }
+    }
+    return result;
+  } catch (error) {
+    console.error('Failed to parse package list:', error);
+    return [];
+  }
+};
+
+const getManagerPackages = async (manager: PackageManagerName): Promise<PackageManagerPackagesResult> => {
+  const run = async (scope: 'global' | 'local'): Promise<PackageInfo[]> => {
+    try {
+      let cmd: string;
+      if (manager === 'npm') {
+        cmd = scope === 'global' ? 'npm ls -g --depth=0 --json' : 'npm ls --depth=0 --json';
+      } else {
+        cmd = scope === 'global' ? 'pnpm ls -g --depth=0 --json' : 'pnpm ls --depth=0 --json';
+      }
+      const { stdout } = await execAsync(cmd);
+      return parseNpmLikeList(stdout);
+    } catch (error) {
+      console.error(`Failed to get ${manager} packages (${scope}):`, error);
+      return [];
+    }
+  };
+
+  const [global, local] = await Promise.all([
+    run('global'),
+    run('local'),
+  ]);
+
+  return {
+    manager,
+    global,
+    local,
+  };
+};
+
+ipcMain.handle('package-manager:get-packages', async () => {
+  const results: PackageManagerPackagesResult[] = [];
+
+  try {
+    results.push(await getManagerPackages('npm'));
+  } catch (error) {
+    console.error('npm packages fetch failed:', error);
+  }
+
+  try {
+    results.push(await getManagerPackages('pnpm'));
+  } catch (error) {
+    console.error('pnpm packages fetch failed:', error);
+  }
+
+  return results;
 });
 
 type LocalNodeVersion = {
