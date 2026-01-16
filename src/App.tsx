@@ -1,8 +1,9 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
-import { HashRouter } from 'react-router-dom';
+import { HashRouter, Routes, Route, NavLink, Navigate } from 'react-router-dom';
 import '@/index.css';
-import DeviceInfo from './components/DeviceInfo';
+import DeviceInfo from '@/components/DeviceInfo';
+import ImageCompressor from '@/components/ImageCompressor';
 
 const App: React.FC = () => {
   return (
@@ -17,16 +18,42 @@ const App: React.FC = () => {
           </div>
           
           <nav className="flex-1 px-4 space-y-2">
-            <button className="w-full flex items-center gap-3 px-3 py-2 rounded-xl border text-sm font-medium bg-indigo-50 text-indigo-600 border-indigo-200">
-              <div className="w-1.5 h-1.5 rounded-full shadow-[0_0_8px_rgba(129,140,248,0.8)] bg-indigo-600" />
+            <NavLink
+              to="/device"
+              className={({ isActive }) =>
+                `w-full flex items-center gap-3 px-3 py-2 rounded-xl border text-sm font-medium ${
+                  isActive
+                    ? 'bg-indigo-50 text-indigo-600 border-indigo-200 shadow-[0_0_8px_rgba(129,140,248,0.8)]'
+                    : 'bg-white text-zinc-700 border-zinc-200 hover:bg-zinc-50'
+                }`
+              }
+            >
+              <div className="w-1.5 h-1.5 rounded-ful" />
               设备监控台
-            </button>
+            </NavLink>
+            <NavLink
+              to="/compressor"
+              className={({ isActive }) =>
+                `w-full flex items-center gap-3 px-3 py-2 rounded-xl border text-sm font-medium ${
+                  isActive
+                    ? 'bg-indigo-50 text-indigo-600 border-indigo-200 shadow-[0_0_8px_rgba(129,140,248,0.8)]'
+                    : 'bg-white text-zinc-700 border-zinc-200 hover:bg-zinc-50'
+                }`
+              }
+            >
+              <div className="w-1.5 h-1.5 rounded-full" />
+              图片压缩
+            </NavLink>
           </nav>
         </div>
 
         <div className="flex-1 overflow-y-auto custom-scrollbar bg-white">
           <main className="p-8 space-y-8">
-            <DeviceInfo showProcessList />
+            <Routes>
+              <Route path="/" element={<Navigate to="/device" replace />} />
+              <Route path="/device" element={<DeviceInfo showProcessList />} />
+              <Route path="/compressor" element={<ImageCompressor />} />
+            </Routes>
           </main>
         </div>
       </div>
