@@ -5,3 +5,29 @@
     @apply bg-zinc-50 text-zinc-900;
   }
 }
+
+@keyframes nav-glow-move {
+  0% {
+    background-position: 0% 50%;
+  }
+  50% {
+    background-position: 100% 50%;
+  }
+  100% {
+    background-position: 0% 50%;
+  }
+}
+
+@layer components {
+  .nav-active-glow {
+    position: relative;
+    border-radius: 0.75rem;
+    border: 2px solid transparent;
+    background:
+      linear-gradient(#ffffff, #ffffff) padding-box,
+      linear-gradient(120deg, #6366f1, #a855f7, #ec4899, #6366f1) border-box;
+    /* color: #4f46e5; */
+    background-size: 200% 200%;
+    animation: nav-glow-move 1.8s linear infinite;
+  }
+}
