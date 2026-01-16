@@ -2,6 +2,9 @@ import { app, BrowserWindow, ipcMain } from 'electron';
 import path from 'node:path';
 import started from 'electron-squirrel-startup';
 import si from 'systeminformation';
+import { exec } from 'node:child_process';
+import { promisify } from 'node:util';
+const execAsync = promisify(exec);
 
 // Handle creating/removing shortcuts on Windows when installing/uninstalling.
 if (started) {
@@ -187,5 +190,48 @@ ipcMain.handle('get-app-memory', async () => {
   } catch (error) {
     console.error('Failed to get app memory:', error);
     return [];
+  }
+});
+
+ipcMain.handle('get-git-info', async () => {
+  const parseList = (output: string): { key: string; value: string }[] => {
+    return output
+      .split('\n')
+      .map(line => line.trim())
+      .filter(line => line.length > 0)
+      .map(line => {
+        const idx = line.indexOf('=');
+        if (idx === -1) {
+          return { key: line, value: '' };
+        }
+        return { key: line.slice(0, idx), value: line.slice(idx + 1) };
+      });
+  };
+
+  try {
+    const [globalList, systemList, userName, userEmail, signingKey] = await Promise.all([
+      execAsync('git config --global --list').then(r => r.stdout).catch(() => ''),
+      execAsync('git config --system --list').then(r => r.stdout).catch(() => ''),
+      execAsync('git config --global user.name').then(r => r.stdout.trim()).catch(() => ''),
+      execAsync('git config --global user.email').then(r => r.stdout.trim()).catch(() => ''),
+      execAsync('git config --global user.signingkey').then(r => r.stdout.trim()).catch(() => ''),
+    ]);
+
+    return {
+      user: {
+        name: userName || undefined,
+        email: userEmail || undefined,
+        signingkey: signingKey || undefined,
+      },
+      global: parseList(globalList),
+      system: parseList(systemList),
+    };
+  } catch (error) {
+    console.error('Failed to get git info:', error);
+    return {
+      user: {},
+      global: [],
+      system: [],
+    };
   }
 });
