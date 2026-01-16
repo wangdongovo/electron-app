@@ -1,29 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { GitBranch, User, List } from 'lucide-react';
 
-interface GitKeyValue {
-  key: string;
-  value: string;
-}
-
-interface GitInfoData {
-  user: {
-    name?: string;
-    email?: string;
-    signingkey?: string;
-  };
-  global: GitKeyValue[];
-  system: GitKeyValue[];
-}
-
-declare global {
-  interface Window {
-    electron: {
-      getGitInfo: () => Promise<GitInfoData>;
-    };
-  }
-}
-
 const GitInfo: React.FC = () => {
   const [data, setData] = useState<GitInfoData | null>(null);
   const [loading, setLoading] = useState(true);

@@ -4,45 +4,7 @@ import { Cpu, HardDrive, Laptop, Activity, Battery, Info } from 'lucide-react';
 
 import ProcessList from './ProcessList';
 
-interface SystemInfo {
-  cpu: {
-    manufacturer: string;
-    brand: string;
-    cores: number;
-    speed: string;
-  };
-  mem: {
-    total: number;
-    used: number;
-    free: number;
-  };
-  os: {
-    distro: string;
-    release: string;
-    arch: string;
-  };
-  disk: Array<{
-    name?: string;
-    type?: string;
-    interfaceType?: string;
-  }>;
-  battery: {
-    hasBattery: boolean;
-    percent: number;
-    isCharging: boolean;
-    cycleCount: number;
-  };
-}
 
-declare global {
-  interface Window {
-    electron: {
-      getSystemInfo: () => Promise<SystemInfo>;
-      getProcessInfo: () => Promise<any[]>;
-      getAppMemoryInfo: () => Promise<{ name: string; mem: number; cpu: number; processCount: number; icon?: string }[]>;
-    };
-  }
-}
 
 interface DeviceInfoProps {
   showProcessList?: boolean;

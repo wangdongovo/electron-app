@@ -1,10 +1,39 @@
 import { app, BrowserWindow, ipcMain } from 'electron';
 import path from 'node:path';
+import fs from 'node:fs';
+import os from 'node:os';
+import https from 'node:https';
 import started from 'electron-squirrel-startup';
 import si from 'systeminformation';
-import { exec } from 'node:child_process';
+import { exec, execSync } from 'node:child_process';
 import { promisify } from 'node:util';
 const execAsync = promisify(exec);
+
+// Fix PATH for macOS/Linux GUI apps to match user's shell
+const fixPath = () => {
+  if (process.platform === 'win32') return;
+  try {
+    const shell = process.env.SHELL || '/bin/bash';
+    const env = execSync(`${shell} -i -c "env"`, { encoding: 'utf8' });
+    const lines = env.split('\n');
+    for (const line of lines) {
+      const idx = line.indexOf('=');
+      if (idx !== -1) {
+        const key = line.slice(0, idx);
+        const value = line.slice(idx + 1);
+        if (key === 'PATH') {
+          process.env.PATH = value;
+          console.log('Fixed PATH:', value);
+          break;
+        }
+      }
+    }
+  } catch (err) {
+    console.error('Failed to fix PATH:', err);
+  }
+};
+
+fixPath();
 
 // Handle creating/removing shortcuts on Windows when installing/uninstalling.
 if (started) {
@@ -233,5 +262,248 @@ ipcMain.handle('get-git-info', async () => {
       global: [],
       system: [],
     };
+  }
+});
+
+type LocalNodeVersion = {
+  version: string;
+  path: string;
+  active: boolean;
+  installedAt?: number;
+};
+
+type RemoteNodeVersion = {
+  version: string;
+  lts: boolean | string;
+  date: string;
+  v8?: string;
+  npm?: string;
+};
+
+const getNodeBaseDir = () => {
+  const base = app.getPath('userData');
+  const dir = path.join(base, 'node-versions');
+  if (!fs.existsSync(dir)) {
+    fs.mkdirSync(dir, { recursive: true });
+  }
+  return dir;
+};
+
+const readActiveNodeVersion = async (baseDir: string) => {
+  const file = path.join(baseDir, 'active.json');
+  try {
+    const content = await fs.promises.readFile(file, 'utf-8');
+    const parsed = JSON.parse(content) as { version?: string };
+    return parsed.version || null;
+  } catch (error) {
+    console.error('Failed to read active node version:', error);
+    return null;
+  }
+};
+
+const writeActiveNodeVersion = async (baseDir: string, version: string) => {
+  const file = path.join(baseDir, 'active.json');
+  await fs.promises.writeFile(file, JSON.stringify({ version }), 'utf-8');
+  if (process.platform !== 'win32') {
+    const currentLink = path.join(baseDir, 'current');
+    try {
+      const stat = await fs.promises.lstat(currentLink);
+      if (stat.isSymbolicLink() || stat.isDirectory() || stat.isFile()) {
+        await fs.promises.unlink(currentLink);
+      }
+    } catch (error) {
+      console.error('Failed to cleanup current node link:', error);
+    }
+    const target = path.join(baseDir, version);
+    try {
+      await fs.promises.symlink(target, currentLink, 'dir');
+    } catch (error) {
+      console.error('Failed to create current node link:', error);
+    }
+  }
+};
+
+const downloadFile = (url: string, dest: string) => {
+  return new Promise<void>((resolve, reject) => {
+    const file = fs.createWriteStream(dest);
+    https
+      .get(url, res => {
+        if (!res.statusCode || res.statusCode >= 400) {
+          reject(new Error(`下载失败，状态码 ${res.statusCode}`));
+          return;
+        }
+        res.pipe(file);
+        file.on('finish', () => {
+          file.close();
+          resolve();
+        });
+      })
+      .on('error', err => {
+        file.close();
+        fs.unlink(dest, () => {
+          reject(err);
+        });
+      });
+  });
+};
+
+ipcMain.handle('node-manager:get-local-versions', async () => {
+  const baseDir = getNodeBaseDir();
+  const active = await readActiveNodeVersion(baseDir);
+  const result: LocalNodeVersion[] = [];
+  
+  // Get system node version
+  let systemVersion: string | null = null;
+  let systemPath: string | null = null;
+  try {
+    const { stdout } = await execAsync('node -v');
+    systemVersion = stdout.trim();
+    if (systemVersion.startsWith('v')) {
+      systemVersion = systemVersion.slice(1);
+    }
+    const { stdout: pathOut } = await execAsync('which node');
+    systemPath = pathOut.trim();
+  } catch (error) {
+    // Ignore error if node is not installed system-wide
+  }
+
+  const entries = await fs.promises.readdir(baseDir, { withFileTypes: true });
+  for (const entry of entries) {
+    if (!entry.isDirectory()) {
+      continue;
+    }
+    if (entry.name === 'current') {
+      continue;
+    }
+    const version = entry.name;
+    const dir = path.join(baseDir, version);
+    let installedAt: number | undefined;
+    const metaFile = path.join(dir, 'meta.json');
+    try {
+      const metaContent = await fs.promises.readFile(metaFile, 'utf-8');
+      const meta = JSON.parse(metaContent) as { installedAt?: number };
+      installedAt = meta.installedAt;
+    } catch (error) {
+      console.error('Failed to read node version meta:', error);
+    }
+    result.push({
+      version,
+      path: dir,
+      active: active === version,
+      installedAt,
+    });
+  }
+  result.sort((a, b) => {
+    if (a.active && !b.active) return -1;
+    if (!a.active && b.active) return 1;
+    return (b.installedAt || 0) - (a.installedAt || 0);
+  });
+  return { versions: result, systemVersion, systemPath };
+});
+
+ipcMain.handle('node-manager:get-remote-versions', async () => {
+  const url = 'https://nodejs.org/dist/index.json';
+  const data = await new Promise<string>((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    https
+      .get(url, res => {
+        if (!res.statusCode || res.statusCode >= 400) {
+          reject(new Error(`获取版本信息失败，状态码 ${res.statusCode}`));
+          return;
+        }
+        res.on('data', chunk => chunks.push(chunk));
+        res.on('end', () => resolve(Buffer.concat(chunks).toString('utf-8')));
+      })
+      .on('error', err => reject(err));
+  });
+  const parsed = JSON.parse(data) as Array<{ version: string; lts: boolean | string; date: string; v8?: string; npm?: string }>;
+  const list: RemoteNodeVersion[] = parsed.map(v => ({
+    version: v.version,
+    lts: v.lts,
+    date: v.date,
+    v8: v.v8,
+    npm: v.npm,
+  }));
+  list.sort((a, b) => (a.date < b.date ? 1 : -1));
+  return list.slice(0, 30);
+});
+
+ipcMain.handle('node-manager:download-version', async (_event, version: string) => {
+  const baseDir = getNodeBaseDir();
+  const targetDir = path.join(baseDir, version);
+  try {
+    await fs.promises.mkdir(targetDir, { recursive: true });
+  } catch (error) {
+    console.error('Failed to ensure node version dir:', error);
+  }
+  const platform = process.platform;
+  const arch = process.arch;
+  if (platform !== 'darwin' && platform !== 'linux') {
+    throw new Error('当前仅支持在 macOS 和 Linux 上安装 Node 版本');
+  }
+  const mappedArch = arch === 'arm64' ? 'arm64' : 'x64';
+  const distName = `node-${version}-${platform}-${mappedArch}`;
+  const filename = `${distName}.tar.xz`;
+  const url = `https://nodejs.org/dist/${version}/${filename}`;
+  const tmpDir = path.join(os.tmpdir(), 'node-manager');
+  await fs.promises.mkdir(tmpDir, { recursive: true });
+  const tmpFile = path.join(tmpDir, filename);
+  await downloadFile(url, tmpFile);
+  await execAsync(`tar -xJf "${tmpFile}" -C "${targetDir}" --strip-components=1`);
+  const metaFile = path.join(targetDir, 'meta.json');
+  await fs.promises.writeFile(
+    metaFile,
+    JSON.stringify({ installedAt: Date.now(), source: url }),
+    'utf-8',
+  );
+  return { success: true };
+});
+
+ipcMain.handle('node-manager:activate-version', async (_event, version: string) => {
+  const baseDir = getNodeBaseDir();
+  const targetDir = path.join(baseDir, version);
+  const exists = fs.existsSync(targetDir);
+  if (!exists) {
+    throw new Error(`版本 ${version} 未安装`);
+  }
+  await writeActiveNodeVersion(baseDir, version);
+  return { success: true };
+});
+
+ipcMain.handle('node-manager:setup-shell', async () => {
+  const baseDir = getNodeBaseDir();
+  const binPath = path.join(baseDir, 'current', 'bin');
+  const exportCmd = `export PATH="${binPath}:$PATH"`;
+  
+  const shell = process.env.SHELL || '/bin/bash';
+  let profilePath = '';
+  
+  if (shell.endsWith('zsh')) {
+    profilePath = path.join(os.homedir(), '.zshrc');
+  } else if (shell.endsWith('bash')) {
+    profilePath = path.join(os.homedir(), '.bash_profile');
+    if (!fs.existsSync(profilePath)) {
+      profilePath = path.join(os.homedir(), '.bashrc');
+    }
+  } else {
+    throw new Error('Unsupported shell: ' + shell);
+  }
+
+  try {
+    let content = '';
+    if (fs.existsSync(profilePath)) {
+      content = await fs.promises.readFile(profilePath, 'utf-8');
+    }
+    
+    if (content.includes(binPath)) {
+      return { success: true, message: 'Already configured' };
+    }
+
+    const comment = '\n# Electron App Node Version Manager';
+    await fs.promises.appendFile(profilePath, `${comment}\n${exportCmd}\n`, 'utf-8');
+    return { success: true, message: 'Configuration added to ' + profilePath };
+  } catch (error) {
+    console.error('Failed to setup shell:', error);
+    throw new Error('Failed to update shell profile');
   }
 });

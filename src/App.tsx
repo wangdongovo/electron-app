@@ -6,6 +6,7 @@ import DeviceInfo from '@/components/DeviceInfo';
 import ImageCompressor from '@/components/ImageCompressor';
 import Sidebar from '@/components/layout/Sidebar';
 import GitInfo from '@/components/GitInfo';
+import NodeManager from '@/components/NodeManager';
 
 const App: React.FC = () => {
   return (
@@ -16,6 +17,7 @@ const App: React.FC = () => {
             { to: '/device', label: '设备监控台' },
             { to: '/compressor', label: '图片压缩' },
             { to: '/git', label: 'Git 账号' },
+            { to: '/node-manager', label: 'Node 管理器' },
           ]}
         />
 
@@ -26,6 +28,7 @@ const App: React.FC = () => {
               <Route path="/device" element={<DeviceInfo showProcessList />} />
               <Route path="/compressor" element={<ImageCompressor />} />
               <Route path="/git" element={<GitInfo />} />
+              <Route path="/node-manager" element={<NodeManager />} />
             </Routes>
           </main>
         </div>
