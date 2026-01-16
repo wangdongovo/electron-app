@@ -1,6 +1,7 @@
-import { app, BrowserWindow } from 'electron';
+import { app, BrowserWindow, ipcMain } from 'electron';
 import path from 'node:path';
 import started from 'electron-squirrel-startup';
+import si from 'systeminformation';
 
 // Handle creating/removing shortcuts on Windows when installing/uninstalling.
 if (started) {
@@ -58,3 +59,133 @@ app.on('activate', () => {
 
 // In this file you can include the rest of your app's specific main process
 // code. You can also put them in separate files and import them here.
+
+ipcMain.handle('get-system-info', async () => {
+  try {
+    const [cpu, mem, os, disk, battery] = await Promise.all([
+      si.cpu(),
+      si.mem(),
+      si.osInfo(),
+      si.diskLayout(),
+      si.battery(),
+    ]);
+
+    return {
+      cpu,
+      mem,
+      os,
+      disk,
+      battery,
+    };
+  } catch (error) {
+    console.error('Failed to get system info:', error);
+    return null;
+  }
+});
+ipcMain.handle('get-process-info', async () => {
+  try {
+    const processes = await si.processes();
+    const sorted = processes.list
+      .sort((a, b) => b.memRss - a.memRss)
+      .map(p => ({
+        name: p.name,
+        mem: p.memRss,
+        cpu: p.cpu,
+        user: p.user,
+        path: (p as any).path ?? '',
+      }));
+
+    return sorted;
+  } catch (error) {
+    console.error('Failed to get process info:', error);
+    return [];
+  }
+});
+
+const appIconCache = new Map<string, string>();
+
+ipcMain.handle('get-app-memory', async () => {
+  try {
+    const processes = await si.processes();
+    const map = new Map<
+      string,
+      {
+        name: string;
+        mem: number;
+        cpu: number;
+        processCount: number;
+        appPath?: string;
+      }
+    >();
+
+    const extractAppInfo = (pathStr: string, name: string) => {
+      if (process.platform === 'darwin' && pathStr) {
+        const bundleMatch = pathStr.match(/(\/.*?\.app)\//);
+        if (bundleMatch && bundleMatch[1]) {
+          const appPath = bundleMatch[1];
+          const appName = appPath.split('/').pop() || name;
+          const inApplications =
+            appPath.startsWith('/Applications/') ||
+            appPath.startsWith('/System/Applications/');
+          return { appName, appPath, inApplications };
+        }
+      }
+      return { appName: name, appPath: '', inApplications: false };
+    };
+
+    for (const p of processes.list) {
+      const rawPath = (p as any).path || '';
+      const { appName, appPath, inApplications } = extractAppInfo(rawPath, p.name);
+
+      if (process.platform === 'darwin' && !inApplications) {
+        continue;
+      }
+
+      const key = appPath || appName;
+      const prev = map.get(key);
+      const mem = p.memRss;
+      const cpu = p.cpu || 0;
+
+      if (prev) {
+        prev.mem += mem;
+        prev.cpu += cpu;
+        prev.processCount += 1;
+      } else {
+        map.set(key, {
+          name: appName,
+          mem,
+          cpu,
+          processCount: 1,
+          appPath: appPath || undefined,
+        });
+      }
+    }
+
+    const aggregated = Array.from(map.values()).sort((a, b) => b.mem - a.mem);
+
+    for (const appInfo of aggregated) {
+      if (!appInfo.appPath) {
+        continue;
+      }
+      if (!appIconCache.has(appInfo.appPath)) {
+        try {
+          const icon = await app.getFileIcon(appInfo.appPath, { size: 'small' });
+          appIconCache.set(appInfo.appPath, icon.toDataURL());
+        } catch {
+          appIconCache.set(appInfo.appPath, '');
+        }
+      }
+    }
+
+    return aggregated.map(a => ({
+      name: a.name,
+      mem: a.mem,
+      cpu: a.cpu,
+      processCount: a.processCount,
+      icon: a.appPath ? appIconCache.get(a.appPath) ?? '' : '',
+    }));
+  } catch (error) {
+    console.error('Failed to get app memory:', error);
+    return [];
+  }
+});
