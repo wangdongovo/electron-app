@@ -12,10 +12,9 @@ const createWindow = () => {
   const mainWindow = new BrowserWindow({
     width: 900,
     height: 900,
-    frame: false, // 移除窗口边框和标题栏
+    // frame: false, // 移除窗口边框和标题栏
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
-      webSecurity: false,
       nodeIntegration: false,
       contextIsolation: true,
     },
