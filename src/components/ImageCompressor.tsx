@@ -286,9 +286,6 @@ const ImageCompressor: React.FC = () => {
       <div className="bg-white border border-zinc-200 rounded-2xl p-4 flex-1 min-h-0 flex flex-col">
         <div className="flex items-center justify-between mb-3">
           <h3 className="text-sm font-semibold text-zinc-800">概览</h3>
-          <div className="text-xs text-zinc-600">
-            原始: {bytesToText(totalSaving.original)} | 压缩: {bytesToText(totalSaving.compressed)} | 节省: {bytesToText(totalSaving.diff)} | 比例: {(totalSaving.ratio * 100).toFixed(1)}%
-          </div>
         </div>
         <div className="space-y-2 flex-1 min-h-0 overflow-y-auto custom-scrollbar pr-2">
           {pagedItems.map(it => {
