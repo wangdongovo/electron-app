@@ -14,6 +14,7 @@ import {
   Command
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { useNavigate, useLocation } from 'react-router-dom';
 
 interface NavItemProps {
   icon: React.ElementType;
@@ -21,13 +22,16 @@ interface NavItemProps {
   badge?: string | number;
   active?: boolean;
   hasSub?: boolean;
+  onClick?: () => void;
 }
 
-const NavItem: React.FC<NavItemProps> = ({ icon: Icon, label, badge, active, hasSub }) => (
-  <div className={cn(
-    "flex items-center justify-between px-3 py-2 rounded-md cursor-pointer text-sm transition-colors",
-    active ? "bg-accent text-accent-foreground font-medium" : "text-muted-foreground hover:bg-accent/50 hover:text-foreground"
-  )}>
+const NavItem: React.FC<NavItemProps> = ({ icon: Icon, label, badge, active, hasSub, onClick }) => (
+  <div 
+    onClick={onClick}
+    className={cn(
+      "flex items-center justify-between px-3 py-2 rounded-md cursor-pointer text-sm transition-colors",
+      active ? "bg-slate-200 text-foreground font-medium" : "text-muted-foreground hover:bg-slate-100 hover:text-foreground"
+    )}>
     <div className="flex items-center gap-3">
       <Icon size={18} />
       <span>{label}</span>
@@ -53,8 +57,15 @@ const NavGroup: React.FC<{ title: string; children: React.ReactNode }> = ({ titl
 );
 
 const Sidebar: React.FC = () => {
+  const navigate = useNavigate();
+  const location = useLocation();
+
+  const isActive = (path: string) => location.pathname === path;
+
   return (
-    <div className="w-64 h-screen border-r bg-white flex flex-col pt-4">
+    <div className="w-64 h-screen border-r bg-white flex flex-col pt-10 relative">
+      <div className="absolute top-0 left-0 w-full h-10 -webkit-app-region-drag pointer-events-none" style={{ WebkitAppRegion: 'drag' } as any} />
+      
       <div className="px-4 flex items-center gap-2 mb-2">
         <div className="p-1.5 bg-foreground rounded-lg flex items-center justify-center">
             <Command size={18} className="text-background" />
@@ -68,11 +79,21 @@ const Sidebar: React.FC = () => {
 
       <div className="flex-1 overflow-y-auto px-2 mt-4">
         <NavGroup title="General">
-          <NavItem icon={LayoutDashboard} label="Dashboard" />
+          <NavItem 
+            icon={LayoutDashboard} 
+            label="Dashboard" 
+            active={isActive('/dashboard')} 
+            onClick={() => navigate('/dashboard')} 
+          />
           <NavItem icon={CheckSquare} label="Tasks" />
           <NavItem icon={LayoutGrid} label="Apps" />
           <NavItem icon={MessageSquare} label="Chats" badge={3} />
-          <NavItem icon={Users} label="Users" active />
+          <NavItem 
+            icon={Users} 
+            label="Users" 
+            active={isActive('/users')} 
+            onClick={() => navigate('/users')} 
+          />
           <NavItem icon={ShieldAlert} label="Secured by Clerk" hasSub />
         </NavGroup>
 

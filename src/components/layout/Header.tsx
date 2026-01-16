@@ -7,8 +7,11 @@ import {
 
 const Header: React.FC = () => {
   return (
-    <header className="h-16 border-b flex items-center justify-between px-6 sticky top-0 bg-white/80 backdrop-blur-md z-10">
-      <div className="flex items-center gap-4">
+    <header 
+      className="h-16 border-b flex items-center justify-between px-6 sticky top-0 bg-white/80 backdrop-blur-md z-10"
+      style={{ WebkitAppRegion: 'drag' } as any}
+    >
+      <div className="flex items-center gap-4 -webkit-app-region-no-drag" style={{ WebkitAppRegion: 'no-drag' } as any}>
         <button className="p-1.5 hover:bg-accent rounded-md text-muted-foreground transition-colors">
           <PanelLeft size={20} />
         </button>
@@ -25,7 +28,7 @@ const Header: React.FC = () => {
         </div>
       </div>
 
-      <div className="flex items-center gap-1.5">
+      <div className="flex items-center gap-1.5 -webkit-app-region-no-drag" style={{ WebkitAppRegion: 'no-drag' } as any}>
         <button className="p-2 hover:bg-accent rounded-md text-muted-foreground transition-colors">
           <Sun size={20} />
         </button>
