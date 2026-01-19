@@ -2,13 +2,17 @@ import { app, BrowserWindow, ipcMain, shell } from 'electron';
 import path from 'node:path';
 import fs from 'node:fs';
 import os from 'node:os';
-import https from 'node:https';
-import started from 'electron-squirrel-startup';
-
 import { exec, execSync } from 'node:child_process';
 import { promisify } from 'node:util';
+import started from 'electron-squirrel-startup';
+import axios from 'axios';
 import si from 'systeminformation';
+
 const execAsync = promisify(exec);
+
+// Declare globals injected by Vite plugin
+declare const MAIN_WINDOW_VITE_DEV_SERVER_URL: string;
+declare const MAIN_WINDOW_VITE_NAME: string;
 
 // Fix PATH for macOS/Linux GUI apps to match user's shell
 const fixPath = () => {
@@ -25,7 +29,8 @@ const fixPath = () => {
         if (key === 'PATH') {
           process.env.PATH = value;
           console.log('Fixed PATH:', value);
-          break;
+        } else if (key === 'NVM_DIR') {
+          process.env.NVM_DIR = value;
         }
       }
     }
@@ -76,26 +81,19 @@ const createWindow = () => {
   // and load the index.html of the app.
   if (MAIN_WINDOW_VITE_DEV_SERVER_URL) {
     mainWindow.loadURL(MAIN_WINDOW_VITE_DEV_SERVER_URL);
+    mainWindow.webContents.openDevTools();
   } else {
     mainWindow.loadFile(
       path.join(__dirname, `../renderer/${MAIN_WINDOW_VITE_NAME}/index.html`),
     );
   }
-
-  // Open the DevTools.
-  if (MAIN_WINDOW_VITE_DEV_SERVER_URL) {
-    mainWindow.webContents.openDevTools();
-  }
 };
 
 // This method will be called when Electron has finished
 // initialization and is ready to create browser windows.
-// Some APIs can only be used after this event occurs.
 app.on('ready', createWindow);
 
-// Quit when all windows are closed, except on macOS. There, it's common
-// for applications and their menu bar to stay active until the user quits
-// explicitly with Cmd + Q.
+// Quit when all windows are closed, except on macOS.
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {
     app.quit();
@@ -103,15 +101,12 @@ app.on('window-all-closed', () => {
 });
 
 app.on('activate', () => {
-  // On OS X it's common to re-create a window in the app when the
-  // dock icon is clicked and there are no other windows open.
   if (BrowserWindow.getAllWindows().length === 0) {
     createWindow();
   }
 });
 
-// In this file you can include the rest of your app's specific main process
-// code. You can also put them in separate files and import them here.
+// --- Existing IPC Handlers ---
 
 ipcMain.handle('get-system-env', async () => {
   const getVersion = async (cmd: string) => {
@@ -156,7 +151,6 @@ ipcMain.handle('get-system-env', async () => {
     };
   }
 });
-
 
 ipcMain.handle('uninstall-app', async (_event, appPath: string) => {
   try {
@@ -214,515 +208,372 @@ ipcMain.handle('get-git-info', async () => {
   }
 });
 
-type PackageManagerName = 'npm' | 'pnpm';
-
-type PackageInfo = {
-  name: string;
-  version: string;
-  description?: string;
-  homepage?: string;
-  path?: string;
-  author?: string;
-};
-
-type PackageManagerPackagesResult = {
-  manager: PackageManagerName;
-  global: PackageInfo[];
-  local: PackageInfo[];
-};
-
-const parseNpmLikeList = (jsonStr: string): PackageInfo[] => {
+ipcMain.handle('node-manager:check-env-status', async () => {
+  const versionsDir = getVersionsDir();
+  const binPath = path.join(versionsDir, 'current', 'bin');
+  
+  // Check if binPath is in user's PATH (basic check)
+  const shell = process.env.SHELL || '/bin/bash';
+  const profilePath = path.join(os.homedir(), shell.endsWith('zsh') ? '.zshrc' : '.bash_profile');
+  
+  let isConfigured = false;
   try {
-    const parsed = JSON.parse(jsonStr);
-    const result: PackageInfo[] = [];
-    const addDeps = (deps: Record<string, unknown>, basePath?: string) => {
-      Object.keys(deps).forEach(key => {
-        const raw = deps[key];
-        if (!raw || typeof raw !== 'object') return;
-        const item = raw as {
-          version?: string;
-          description?: string;
-          homepage?: string;
-          path?: string;
-          author?: string | { name?: string };
-        };
-        const author =
-          typeof item.author === 'string'
-            ? item.author
-            : item.author && typeof item.author === 'object'
-            ? item.author.name
-            : undefined;
-        const info: PackageInfo = {
-          name: key,
-          version: typeof item.version === 'string' ? item.version : '',
-          description: typeof item.description === 'string' ? item.description : undefined,
-          homepage: typeof item.homepage === 'string' ? item.homepage : undefined,
-          path: typeof item.path === 'string' ? item.path : basePath,
-          author,
-        };
-        result.push(info);
-      });
-    };
-
-    if (Array.isArray(parsed)) {
-      parsed.forEach(entry => {
-        if (!entry || typeof entry !== 'object') return;
-        const obj = entry as { dependencies?: Record<string, unknown>; path?: string; name?: string; version?: string };
-        if (obj.dependencies && typeof obj.dependencies === 'object') {
-          addDeps(obj.dependencies, obj.path);
-        } else if (obj.name && obj.version) {
-          result.push({
-            name: obj.name,
-            version: obj.version,
-            path: obj.path,
-          });
-        }
-      });
-    } else if (parsed && typeof parsed === 'object') {
-      const root = parsed as { dependencies?: Record<string, unknown>; path?: string };
-      if (root.dependencies && typeof root.dependencies === 'object') {
-        addDeps(root.dependencies, root.path);
-      }
+    if (fs.existsSync(profilePath)) {
+      const content = fs.readFileSync(profilePath, 'utf-8');
+      isConfigured = content.includes(versionsDir);
     }
-    return result;
   } catch (error) {
-    console.error('Failed to parse package list:', error);
-    return [];
+    console.error('Failed to check shell profile:', error);
   }
-};
-
-const getManagerPackages = async (manager: PackageManagerName): Promise<PackageManagerPackagesResult> => {
-  const run = async (scope: 'global' | 'local'): Promise<PackageInfo[]> => {
-    try {
-      let cmd: string;
-      if (manager === 'npm') {
-        cmd = scope === 'global' ? 'npm ls -g --depth=0 --json' : 'npm ls --depth=0 --json';
-      } else {
-        cmd = scope === 'global' ? 'pnpm ls -g --depth=0 --json' : 'pnpm ls --depth=0 --json';
-      }
-      const { stdout } = await execAsync(cmd);
-      return parseNpmLikeList(stdout);
-    } catch (error) {
-      console.error(`Failed to get ${manager} packages (${scope}):`, error);
-      return [];
-    }
-  };
-
-  const [global, local] = await Promise.all([
-    run('global'),
-    run('local'),
-  ]);
 
   return {
-    manager,
-    global,
-    local,
+    isConfigured,
+    expectedPath: binPath,
+    shellConfigFile: profilePath
   };
-};
-
-ipcMain.handle('package-manager:get-packages', async () => {
-  const results: PackageManagerPackagesResult[] = [];
-
-  try {
-    results.push(await getManagerPackages('npm'));
-  } catch (error) {
-    console.error('npm packages fetch failed:', error);
-  }
-
-  try {
-    results.push(await getManagerPackages('pnpm'));
-  } catch (error) {
-    console.error('pnpm packages fetch failed:', error);
-  }
-
-  return results;
 });
 
-type LocalNodeVersion = {
-  version: string;
-  path: string;
-  active: boolean;
-  installedAt?: number;
-};
-
-type RemoteNodeVersion = {
-  version: string;
-  lts: boolean | string;
-  date: string;
-  v8?: string;
-  npm?: string;
-};
-
-const getNodeBaseDir = () => {
-  const base = app.getPath('userData');
-  const dir = path.join(base, 'node-versions');
-  if (!fs.existsSync(dir)) {
-    fs.mkdirSync(dir, { recursive: true });
+ipcMain.handle('node-manager:setup-env', async () => {
+  const versionsDir = getVersionsDir();
+  const binPath = path.join(versionsDir, 'current', 'bin');
+  const shell = process.env.SHELL || '/bin/bash';
+  const profilePath = path.join(os.homedir(), shell.endsWith('zsh') ? '.zshrc' : '.bash_profile');
+  
+  const exportCmd = `\n# DevToolbox Node Manager\nexport PATH="${binPath}:$PATH"\n`;
+  
+  try {
+    fs.appendFileSync(profilePath, exportCmd);
+    return { success: true };
+  } catch (error: any) {
+    console.error('Failed to update shell profile:', error);
+    return { success: false, message: error.message };
   }
-  return dir;
+});
+
+// --- Node Manager Logic ---
+
+const getVersionsDir = () => {
+  const userDataPath = app.getPath('userData');
+  const versionsDir = path.join(userDataPath, 'node-versions');
+  if (!fs.existsSync(versionsDir)) {
+    fs.mkdirSync(versionsDir, { recursive: true });
+  }
+  return versionsDir;
 };
 
-const readActiveNodeVersion = async (baseDir: string) => {
-  // First try to resolve the 'current' symlink as it's the source of truth for the shell
-  const currentLink = path.join(baseDir, 'current');
+const getActiveVersion = async () => {
+  const versionsDir = getVersionsDir();
+  const currentLink = path.join(versionsDir, 'current');
   try {
     const linkPath = await fs.promises.readlink(currentLink);
-    // linkPath might be absolute or relative.
-    // If it's absolute, basename gives the version directory name.
+    // linkPath is likely absolute or relative. If it's relative like "v18.0.0", we just return it.
+    // If it's absolute, we extract basename.
     return path.basename(linkPath);
   } catch (error) {
-    // If symlink check fails, fallback to active.json
-  }
-
-  const file = path.join(baseDir, 'active.json');
-  try {
-    const content = await fs.promises.readFile(file, 'utf-8');
-    const parsed = JSON.parse(content) as { version?: string };
-    return parsed.version || null;
-  } catch (error) {
-    console.error('Failed to read active node version:', error);
     return null;
   }
 };
 
-const writeActiveNodeVersion = async (baseDir: string, version: string) => {
-  const file = path.join(baseDir, 'active.json');
-  await fs.promises.writeFile(file, JSON.stringify({ version }), 'utf-8');
-  if (process.platform !== 'win32') {
-    const currentLink = path.join(baseDir, 'current');
-    try {
-      const stat = await fs.promises.lstat(currentLink);
-      if (stat.isSymbolicLink() || stat.isDirectory() || stat.isFile()) {
-        await fs.promises.unlink(currentLink);
-      }
-    } catch (error) {
-      console.error('Failed to cleanup current node link:', error);
-    }
-    const target = path.join(baseDir, version);
-    try {
-      await fs.promises.symlink(target, currentLink, 'dir');
-    } catch (error) {
-      console.error('Failed to create current node link:', error);
-    }
+const getNvmVersions = async (): Promise<any[]> => {
+  const nvmDir = process.env.NVM_DIR || path.join(os.homedir(), '.nvm');
+  const versionsDir = path.join(nvmDir, 'versions', 'node');
+
+  if (!fs.existsSync(versionsDir)) {
+    return [];
+  }
+
+  try {
+    const items = await fs.promises.readdir(versionsDir, { withFileTypes: true });
+    return items
+      .filter((item: fs.Dirent) => item.isDirectory() && item.name.startsWith('v'))
+      .map((item: fs.Dirent) => ({
+        version: item.name,
+        path: path.join(versionsDir, item.name),
+        active: false,
+        installedAt: fs.statSync(path.join(versionsDir, item.name)).birthtimeMs,
+        source: 'nvm'
+      }));
+  } catch (error) {
+    console.error('Failed to get NVM versions:', error);
+    return [];
   }
 };
 
-const downloadFile = (url: string, dest: string) => {
-  return new Promise<void>((resolve, reject) => {
-    const file = fs.createWriteStream(dest);
-    https
-      .get(url, res => {
-        if (!res.statusCode || res.statusCode >= 400) {
-          reject(new Error(`下载失败，状态码 ${res.statusCode}`));
-          return;
-        }
-        res.pipe(file);
-        file.on('finish', () => {
-          file.close();
-          resolve();
-        });
-      })
-      .on('error', err => {
-        file.close();
-        fs.unlink(dest, () => {
-          reject(err);
-        });
-      });
-  });
+const getSystemVersion = async (): Promise<any | null> => {
+  try {
+    const { stdout: nodePath } = await execAsync('which node');
+    const { stdout: nodeVersion } = await execAsync('node -v');
+
+    if (nodePath && nodeVersion) {
+      const binPath = path.dirname(nodePath.trim());
+      const installPath = path.dirname(binPath);
+      
+      // Ensure it looks like a valid node install (has bin directory)
+      if (fs.existsSync(path.join(installPath, 'bin', 'node'))) {
+        return {
+          version: nodeVersion.trim(),
+          path: installPath,
+          active: false,
+          installedAt: Date.now(),
+          source: 'system'
+        };
+      }
+    }
+    return null;
+  } catch (error) {
+    return null;
+  }
 };
 
 ipcMain.handle('node-manager:get-local-versions', async () => {
-  const baseDir = getNodeBaseDir();
-  const active = await readActiveNodeVersion(baseDir);
-  const result: LocalNodeVersion[] = [];
+  const versionsDir = getVersionsDir();
   
-  // Get system node version
-  let systemVersion: string | null = null;
-  let systemPath: string | null = null;
+  // 1. App local versions
+  let localVersions: any[] = [];
   try {
-    const { stdout } = await execAsync('node -v');
-    systemVersion = stdout.trim();
-    if (systemVersion.startsWith('v')) {
-      systemVersion = systemVersion.slice(1);
-    }
-    const { stdout: pathOut } = await execAsync('which node');
-    systemPath = pathOut.trim();
+    const items = await fs.promises.readdir(versionsDir, { withFileTypes: true });
+    localVersions = items
+      .filter((item: fs.Dirent) => item.isDirectory() && item.name !== 'current' && item.name.startsWith('v'))
+      .map((item: fs.Dirent) => ({
+        version: item.name,
+        path: path.join(versionsDir, item.name),
+        active: false,
+        installedAt: fs.statSync(path.join(versionsDir, item.name)).birthtimeMs,
+        source: 'local'
+      }));
   } catch (error) {
-    // Ignore error if node is not installed system-wide
+    console.error('Failed to get local versions:', error);
   }
 
-  const entries = await fs.promises.readdir(baseDir, { withFileTypes: true });
-  for (const entry of entries) {
-    if (!entry.isDirectory()) {
-      continue;
+  // 2. NVM versions
+  const nvmVersions = await getNvmVersions();
+
+  // 3. System version
+  const systemVersion = await getSystemVersion();
+  const allSystemVersions = systemVersion ? [systemVersion] : [];
+
+  // Merge
+  const allVersions = [...localVersions, ...nvmVersions, ...allSystemVersions];
+
+  // Determine active version by checking what 'node' command resolves to in system
+  let activePath: string | null = null;
+  try {
+    const { stdout } = await execAsync('which node');
+    if (stdout) {
+      // Resolve symlinks to get the real path (e.g. /usr/local/bin/node -> ... -> v22.22.0/bin/node)
+      activePath = await fs.promises.realpath(stdout.trim());
+      // Move up two levels to get the installation root (bin/node -> bin -> root)
+      activePath = path.dirname(path.dirname(activePath));
     }
-    if (entry.name === 'current') {
-      continue;
-    }
-    const version = entry.name;
-    const dir = path.join(baseDir, version);
-    let installedAt: number | undefined;
-    const metaFile = path.join(dir, 'meta.json');
-    let isValid = false;
-    
-    // Check if version is valid (has meta.json and bin/node)
+  } catch (e) {
+    // If 'which node' fails, try the internal current link as fallback
+    const currentLink = path.join(versionsDir, 'current');
     try {
-      const metaContent = await fs.promises.readFile(metaFile, 'utf-8');
-      const meta = JSON.parse(metaContent) as { installedAt?: number };
-      installedAt = meta.installedAt;
-      
-      const nodeBin = path.join(dir, 'bin', 'node');
-      if (fs.existsSync(nodeBin)) {
-        isValid = true;
+      if (fs.existsSync(currentLink)) {
+        activePath = await fs.promises.readlink(currentLink);
+        if (!path.isAbsolute(activePath)) {
+          activePath = path.join(versionsDir, activePath);
+        }
       }
-    } catch (error) {
-      // Ignore read errors, treat as invalid
-    }
+    } catch (err) {
+       // Ignore fallback error
+     }
+   }
+ 
+   const finalVersions = allVersions.map(v => {
+       // Normalize paths for comparison (resolve symlinks, standardize separators)
+       // v.path is the installation root
+       let isPathMatch = false;
+       if (activePath) {
+         try {
+            const normalizedVPath = path.resolve(v.path);
+            const normalizedActivePath = path.resolve(activePath);
+            isPathMatch = normalizedActivePath === normalizedVPath;
+         } catch(e) {
+           // Ignore path resolution errors
+         }
+       }
 
-    if (!isValid) {
-      // Optional: Clean up invalid directory? For now just skip it so it shows as "Not Installed"
-      // await fs.promises.rm(dir, { recursive: true, force: true }).catch(() => {});
-      continue;
-    }
-
-    result.push({
-      version,
-      path: dir,
-      active: active === version,
-      installedAt,
-    });
-  }
-  result.sort((a, b) => {
-    if (a.active && !b.active) return -1;
-    if (!a.active && b.active) return 1;
-    return (b.installedAt || 0) - (a.installedAt || 0);
+      return {
+        ...v,
+        active: isPathMatch
+      };
   });
-  return { versions: result, systemVersion, systemPath };
+
+  const currentVersion = finalVersions.find(v => v.active)?.version || null;
+      
+  return {
+    versions: finalVersions,
+    currentVersion
+  };
 });
 
 ipcMain.handle('node-manager:get-remote-versions', async () => {
-  const url = 'https://nodejs.org/dist/index.json';
-  const data = await new Promise<string>((resolve, reject) => {
-    const chunks: Buffer[] = [];
-    https
-      .get(url, res => {
-        if (!res.statusCode || res.statusCode >= 400) {
-          reject(new Error(`获取版本信息失败，状态码 ${res.statusCode}`));
-          return;
-        }
-        res.on('data', chunk => chunks.push(chunk));
-        res.on('end', () => resolve(Buffer.concat(chunks).toString('utf-8')));
-      })
-      .on('error', err => reject(err));
-  });
-  const parsed = JSON.parse(data) as Array<{ version: string; lts: boolean | string; date: string; v8?: string; npm?: string }>;
-  const list: RemoteNodeVersion[] = parsed.map(v => ({
-    version: v.version,
-    lts: v.lts,
-    date: v.date,
-    v8: v.v8,
-    npm: v.npm,
-  }));
-  list.sort((a, b) => (a.date < b.date ? 1 : -1));
-  return list.slice(0, 30);
+  try {
+    const response = await axios.get('https://nodejs.org/dist/index.json');
+    return response.data;
+  } catch (error) {
+    console.error('Failed to fetch remote versions:', error);
+    return [];
+  }
 });
 
 ipcMain.handle('node-manager:download-version', async (_event, version: string) => {
-  const baseDir = getNodeBaseDir();
-  const targetDir = path.join(baseDir, version);
-  try {
-    await fs.promises.mkdir(targetDir, { recursive: true });
-  } catch (error) {
-    console.error('Failed to ensure node version dir:', error);
-  }
-  const platform = process.platform;
-  const arch = process.arch;
-  if (platform !== 'darwin' && platform !== 'linux') {
-    throw new Error('当前仅支持在 macOS 和 Linux 上安装 Node 版本');
-  }
-  const mappedArch = arch === 'arm64' ? 'arm64' : 'x64';
-  const distName = `node-${version}-${platform}-${mappedArch}`;
-  const filename = `${distName}.tar.xz`;
-  const url = `https://nodejs.org/dist/${version}/${filename}`;
-  const tmpDir = path.join(os.tmpdir(), 'node-manager');
-  await fs.promises.mkdir(tmpDir, { recursive: true });
-  const tmpFile = path.join(tmpDir, filename);
+  const versionsDir = getVersionsDir();
+  const targetDir = path.join(versionsDir, version);
   
-  try {
-    await downloadFile(url, tmpFile);
-    await execAsync(`tar -xJf "${tmpFile}" -C "${targetDir}" --strip-components=1`);
-    const metaFile = path.join(targetDir, 'meta.json');
-    await fs.promises.writeFile(
-      metaFile,
-      JSON.stringify({ installedAt: Date.now(), source: url }),
-      'utf-8',
-    );
-  } catch (error) {
-    // Cleanup target directory on failure
-    try {
-      await fs.promises.rm(targetDir, { recursive: true, force: true });
-    } catch (cleanupError) {
-      console.error('Failed to cleanup target dir:', cleanupError);
-    }
-    throw error;
+  if (fs.existsSync(targetDir)) {
+    return { success: true, message: 'Version already installed' };
   }
-  return { success: true };
+
+  const platform = process.platform === 'darwin' ? 'darwin' : process.platform === 'win32' ? 'win32' : 'linux';
+  const arch = process.arch; // 'x64' or 'arm64'
+  const extension = platform === 'win32' ? 'zip' : 'tar.gz';
+  const fileName = `node-${version}-${platform}-${arch}.${extension}`;
+  const url = `https://nodejs.org/dist/${version}/${fileName}`;
+  const tempFile = path.join(os.tmpdir(), fileName);
+
+  try {
+    // 1. Download
+    const response = await axios({
+      url,
+      method: 'GET',
+      responseType: 'stream'
+    });
+    
+    const writer = fs.createWriteStream(tempFile);
+    
+    await new Promise((resolve, reject) => {
+      (response.data as any).pipe(writer);
+      writer.on('finish', resolve);
+      writer.on('error', reject);
+    });
+
+    // 2. Extract
+    if (extension === 'tar.gz') {
+      await execAsync(`tar -xzf "${tempFile}" -C "${versionsDir}"`);
+    } else {
+      // Basic zip support for completeness, though we are on macos
+      await execAsync(`unzip "${tempFile}" -d "${versionsDir}"`);
+    }
+
+    // 3. Rename folder
+    const extractedName = fileName.replace(`.${extension}`, '');
+    const extractedPath = path.join(versionsDir, extractedName);
+    
+    if (fs.existsSync(extractedPath)) {
+      await fs.promises.rename(extractedPath, targetDir);
+    } else {
+      // Fallback: try to find what was extracted
+      const items = await fs.promises.readdir(versionsDir);
+      const candidate = items.find((i: string) => i.startsWith(`node-${version}`));
+      if (candidate) {
+        await fs.promises.rename(path.join(versionsDir, candidate), targetDir);
+      } else {
+        throw new Error('Extraction failed: folder not found');
+      }
+    }
+
+    // 4. Cleanup
+    fs.unlinkSync(tempFile);
+
+    return { success: true };
+  } catch (error: any) {
+    console.error('Download failed:', error);
+    if (fs.existsSync(tempFile)) fs.unlinkSync(tempFile);
+    return { success: false, message: error.message };
+  }
 });
 
 ipcMain.handle('node-manager:activate-version', async (_event, version: string) => {
-  const baseDir = getNodeBaseDir();
-  const targetDir = path.join(baseDir, version);
-  const exists = fs.existsSync(targetDir);
-  if (!exists) {
-    throw new Error(`版本 ${version} 未安装`);
-  }
-  
-  // Verify that the version is valid (has node binary)
-  const nodeBin = path.join(targetDir, 'bin', 'node');
-  if (!fs.existsSync(nodeBin)) {
-    throw new Error(`版本 ${version} 文件损坏，请重新安装`);
-  }
+  const versionsDir = getVersionsDir();
+  const currentLink = path.join(versionsDir, 'current');
 
-  await writeActiveNodeVersion(baseDir, version);
-  return { success: true };
-});
-
-ipcMain.handle('node-manager:setup-shell', async () => {
-  const baseDir = getNodeBaseDir();
-  const binPath = path.join(baseDir, 'current', 'bin');
-  const exportCmd = `export PATH="${binPath}:$PATH"`;
+  // Search for the version path
+  let targetPath = path.join(versionsDir, version);
   
-  const shell = process.env.SHELL || '/bin/bash';
-  let profilePath = '';
-  
-  if (shell.endsWith('zsh')) {
-    profilePath = path.join(os.homedir(), '.zshrc');
-  } else if (shell.endsWith('bash')) {
-    profilePath = path.join(os.homedir(), '.bash_profile');
-    if (!fs.existsSync(profilePath)) {
-      profilePath = path.join(os.homedir(), '.bashrc');
+  if (!fs.existsSync(targetPath)) {
+    // Check NVM
+    const nvmVersions = await getNvmVersions();
+    const nvmCandidate = nvmVersions.find(v => v.version === version);
+    if (nvmCandidate) {
+      targetPath = nvmCandidate.path;
+    } else {
+      // Check System
+      const systemVersion = await getSystemVersion();
+      if (systemVersion && systemVersion.version === version) {
+        targetPath = systemVersion.path;
+      } else {
+        return { success: false, message: 'Version not installed' };
+      }
     }
-  } else {
-    throw new Error('Unsupported shell: ' + shell);
   }
 
   try {
-    let content = '';
-    if (fs.existsSync(profilePath)) {
-      content = await fs.promises.readFile(profilePath, 'utf-8');
+    // Remove existing link if it exists
+    try {
+      const stats = fs.lstatSync(currentLink);
+      // If it exists (even as a broken link), remove it
+      fs.unlinkSync(currentLink);
+    } catch (e: any) {
+      // Ignore ENOENT (file doesn't exist), rethrow others
+      if (e.code !== 'ENOENT') {
+        throw e;
+      }
     }
     
-    if (content.includes(binPath)) {
-      return { success: true, message: 'Already configured' };
+    // Create symlink
+    await fs.promises.symlink(targetPath, currentLink);
+
+    // Auto-setup Env if needed
+    const binPath = path.join(versionsDir, 'current', 'bin');
+    const shell = process.env.SHELL || '/bin/bash';
+    const profilePath = path.join(os.homedir(), shell.endsWith('zsh') ? '.zshrc' : '.bash_profile');
+    
+    // Update current process PATH so that subsequent checks (like get-local-versions)
+    // see the change immediately without restarting the app
+    if (process.env.PATH && !process.env.PATH.startsWith(binPath)) {
+       process.env.PATH = `${binPath}${path.delimiter}${process.env.PATH}`;
     }
 
-    const comment = '\n# Electron App Node Version Manager';
-    await fs.promises.appendFile(profilePath, `${comment}\n${exportCmd}\n`, 'utf-8');
-    return { success: true, message: 'Configuration added to ' + profilePath };
-  } catch (error) {
-    console.error('Failed to setup shell:', error);
-    throw new Error('Failed to update shell profile');
-  }
-});
-
-// NPM Registry Management
-const getNpmRegistryFile = () => {
-  const base = app.getPath('userData');
-  return path.join(base, 'npm-registries.json');
-};
-
-const defaultRegistries = [
-  { name: 'npm', url: 'https://registry.npmjs.org/' },
-  { name: 'taobao', url: 'https://registry.npmmirror.com/' },
-  { name: 'tencent', url: 'https://mirrors.cloud.tencent.com/npm/' },
-  { name: 'cnpm', url: 'https://r.cnpmjs.org/' },
-];
-
-ipcMain.handle('npm-registry:list', async () => {
-  const file = getNpmRegistryFile();
-  let custom = [];
-  if (fs.existsSync(file)) {
     try {
-      const content = await fs.promises.readFile(file, 'utf-8');
-      custom = JSON.parse(content);
-    } catch (err) {
-      console.error('Failed to read custom registries:', err);
+      let isConfigured = false;
+      if (fs.existsSync(profilePath)) {
+        const content = fs.readFileSync(profilePath, 'utf-8');
+        isConfigured = content.includes(versionsDir);
+      }
+
+      if (!isConfigured) {
+        const exportCmd = `\n# DevToolbox Node Manager\nexport PATH="${binPath}:$PATH"\n`;
+        fs.appendFileSync(profilePath, exportCmd);
+      }
+    } catch (envError) {
+      console.error('Auto-setup env failed:', envError);
+      // Don't fail the activation if env setup fails
     }
-  }
-
-  let current = '';
-  try {
-    const { stdout } = await execAsync('npm config get registry');
-    current = stdout.trim();
-  } catch (err) {
-    console.error('Failed to get current npm registry:', err);
-  }
-
-  return {
-    registries: [...defaultRegistries, ...custom],
-    current,
-  };
-});
-
-ipcMain.handle('npm-registry:add', async (_event, registry: { name: string; url: string }) => {
-  const file = getNpmRegistryFile();
-  let custom = [];
-  if (fs.existsSync(file)) {
-    try {
-      const content = await fs.promises.readFile(file, 'utf-8');
-      custom = JSON.parse(content);
-    } catch (err) {
-      console.error('Failed to read custom registries:', err);
-    }
-  }
-
-  custom.push(registry);
-  await fs.promises.writeFile(file, JSON.stringify(custom, null, 2), 'utf-8');
-  return { success: true };
-});
-
-ipcMain.handle('npm-registry:delete', async (_event, url: string) => {
-  const file = getNpmRegistryFile();
-  if (fs.existsSync(file)) {
-    try {
-      const content = await fs.promises.readFile(file, 'utf-8');
-      const custom = JSON.parse(content);
-      const updated = custom.filter((r: { name: string; url: string }) => r.url !== url);
-      await fs.promises.writeFile(file, JSON.stringify(updated, null, 2), 'utf-8');
-    } catch (err) {
-      console.error('Failed to delete custom registry:', err);
-    }
-  }
-  return { success: true };
-});
-
-ipcMain.handle('npm-registry:set', async (_event, url: string) => {
-  try {
-    await execAsync(`npm config set registry ${url}`);
+    
     return { success: true };
-  } catch (error: unknown) {
-    console.error('Failed to set npm registry:', error);
-    return { success: false, message: error instanceof Error ? error.message : '设置失败' };
+  } catch (error: any) {
+    console.error('Activation failed:', error);
+    return { success: false, message: error.message };
   }
 });
 
-ipcMain.handle('node-env:check-status', async () => {
-  const check = async (cmd: string) => {
-    try {
-      const { stdout } = await execAsync(cmd);
-      return { installed: true, version: stdout.trim() };
-    } catch {
-      return { installed: false, version: null };
-    }
-  };
+ipcMain.handle('node-manager:remove-version', async (_event, version: string) => {
+  const versionsDir = getVersionsDir();
+  const targetPath = path.join(versionsDir, version);
+  const activeVersion = await getActiveVersion();
 
-  const node = await check('node -v');
-  const npm = await check('npm -v');
-  
-  return {
-    node,
-    npm,
-    platform: process.platform,
-    arch: process.arch,
-  };
+  if (activeVersion === version) {
+    return { success: false, message: 'Cannot remove active version' };
+  }
+
+  try {
+    if (fs.existsSync(targetPath)) {
+      await fs.promises.rm(targetPath, { recursive: true, force: true });
+    }
+    return { success: true };
+  } catch (error: any) {
+    return { success: false, message: error.message };
+  }
 });

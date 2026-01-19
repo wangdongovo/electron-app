@@ -95,37 +95,26 @@ declare global {
     path: string;
     active: boolean;
     installedAt?: number;
+    source: 'local' | 'nvm' | 'system';
   }
 
   interface RemoteNodeVersion {
     version: string;
-    lts: boolean | string;
     date: string;
-    v8?: string;
+    files: string[];
     npm?: string;
+    v8?: string;
+    uv?: string;
+    zlib?: string;
+    openssl?: string;
+    modules?: string;
+    lts: boolean | string;
+    security?: boolean;
   }
 
   interface NodeVersionsResult {
-  versions: LocalNodeVersion[];
-  systemVersion: string | null;
-  systemPath: string | null;
-}
-
-  type PackageManagerName = 'npm' | 'pnpm';
-
-  interface PackageInfo {
-    name: string;
-    version: string;
-    description?: string;
-    homepage?: string;
-    path?: string;
-    author?: string;
-  }
-
-  interface PackageManagerPackagesResult {
-    manager: PackageManagerName;
-    global: PackageInfo[];
-    local: PackageInfo[];
+    versions: LocalNodeVersion[];
+    currentVersion: string | null;
   }
 
   interface Window {
@@ -135,14 +124,15 @@ declare global {
       getAppMemoryInfo: () => Promise<AppMemoryInfo[]>;
       uninstallApp: (path: string) => Promise<{ success: boolean; message?: string }>;
       getGitInfo: () => Promise<GitInfoData>;
-      getPackageManagers: () => Promise<PackageManagerPackagesResult[]>;
     };
     nodeManager: {
       getLocalVersions: () => Promise<NodeVersionsResult>;
       getRemoteVersions: () => Promise<RemoteNodeVersion[]>;
-      downloadVersion: (version: string) => Promise<{ success: boolean }>;
-      activateVersion: (version: string) => Promise<{ success: boolean }>;
-      setupShell: () => Promise<{ success: boolean; message: string }>;
+      downloadVersion: (version: string) => Promise<{ success: boolean; message?: string }>;
+      activateVersion: (version: string) => Promise<{ success: boolean; message?: string }>;
+      removeVersion: (version: string) => Promise<{ success: boolean; message?: string }>;
+      checkEnvStatus: () => Promise<{ isConfigured: boolean; expectedPath: string; shellConfigFile: string }>;
+      setupEnv: () => Promise<{ success: boolean; message?: string }>;
     };
   }
 }

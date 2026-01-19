@@ -252,7 +252,7 @@ const EnvDetection: React.FC = () => {
                           className="gap-2 focus:bg-emerald-50 focus:text-emerald-600 cursor-pointer text-emerald-600 font-medium"
                           onClick={() => window.open(item.url, "_blank")}
                         >
-                          <Download size={14} />
+                          {/* <Download size={14} /> */}
                           Install Now
                         </DropdownMenuItem>
                       )}

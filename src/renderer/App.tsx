@@ -5,17 +5,17 @@ import '@/styles/index.css';
 import ImageCompressor from '@/components/ImageCompressor';
 import Sidebar from '@/components/layout/Sidebar';
 import GitInfo from '@/components/GitInfo';
-import NodeManager from '@/components/NodeManager';
 import DateManager from '@/components/DateManager';
 import EnvDetection from '@/components/EnvDetection';
+import NodeManager from '@/components/NodeManager';
 
 const App: React.FC = () => {
   const sidebarItems = useMemo(() => [
     { to: '/env-detection', label: '环境检测' },
+    { to: '/node-manager', label: 'Node 管理器' },
     { to: '/date', label: '日期管理' },
     { to: '/compressor', label: '图片压缩' },
     { to: '/git', label: 'Git 账号' },
-    { to: '/node-manager', label: 'Node 管理器' },
   ], []);
 
   return (
@@ -28,10 +28,10 @@ const App: React.FC = () => {
             <Routes>
               <Route path="/" element={<Navigate to="/env-detection" replace />} />
               <Route path="/env-detection" element={<EnvDetection />} />
+              <Route path="/node-manager" element={<NodeManager />} />
               <Route path="/date" element={<DateManager />} />
               <Route path="/compressor" element={<ImageCompressor />} />
               <Route path="/git" element={<GitInfo />} />
-              <Route path="/node-manager" element={<NodeManager />} />
             </Routes>
           </main>
         </div>
