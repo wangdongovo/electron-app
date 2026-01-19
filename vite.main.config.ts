@@ -16,8 +16,6 @@ export default defineConfig({
         'node:https',
         'node:child_process',
         'node:util',
-        'electron-squirrel-startup',
-        'systeminformation',
       ],
       output: {
         entryFileNames: 'main.js',

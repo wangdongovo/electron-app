@@ -15,7 +15,7 @@ const Sidebar: React.FC<SidebarProps> = ({ items }) => {
     <div className="w-64 border-zinc-200 bg-white flex flex-none flex-col">
       <div className="p-6">
         <h1 className="text-xl font-bold bg-gradient-to-br from-zinc-900 to-zinc-500 bg-clip-text text-transparent italic tracking-tight">
-          
+          DevToolbox
         </h1>
       </div>
       <nav className="flex-1 px-4 space-y-2">
