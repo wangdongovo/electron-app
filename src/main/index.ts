@@ -162,11 +162,11 @@ ipcMain.handle('uninstall-app', async (_event, appPath: string) => {
   try {
     await shell.trashItem(appPath);
     return { success: true };
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('Failed to uninstall app:', error);
     return {
       success: false,
-      message: error?.message || '卸载失败，请在访达中手动删除该应用。',
+      message: error instanceof Error ? error.message : '卸载失败，请在访达中手动删除该应用。',
     };
   }
 });
@@ -579,4 +579,106 @@ ipcMain.handle('node-manager:setup-shell', async () => {
     console.error('Failed to setup shell:', error);
     throw new Error('Failed to update shell profile');
   }
+});
+
+// NPM Registry Management
+const getNpmRegistryFile = () => {
+  const base = app.getPath('userData');
+  return path.join(base, 'npm-registries.json');
+};
+
+const defaultRegistries = [
+  { name: 'npm', url: 'https://registry.npmjs.org/' },
+  { name: 'taobao', url: 'https://registry.npmmirror.com/' },
+  { name: 'tencent', url: 'https://mirrors.cloud.tencent.com/npm/' },
+  { name: 'cnpm', url: 'https://r.cnpmjs.org/' },
+];
+
+ipcMain.handle('npm-registry:list', async () => {
+  const file = getNpmRegistryFile();
+  let custom = [];
+  if (fs.existsSync(file)) {
+    try {
+      const content = await fs.promises.readFile(file, 'utf-8');
+      custom = JSON.parse(content);
+    } catch (err) {
+      console.error('Failed to read custom registries:', err);
+    }
+  }
+
+  let current = '';
+  try {
+    const { stdout } = await execAsync('npm config get registry');
+    current = stdout.trim();
+  } catch (err) {
+    console.error('Failed to get current npm registry:', err);
+  }
+
+  return {
+    registries: [...defaultRegistries, ...custom],
+    current,
+  };
+});
+
+ipcMain.handle('npm-registry:add', async (_event, registry: { name: string; url: string }) => {
+  const file = getNpmRegistryFile();
+  let custom = [];
+  if (fs.existsSync(file)) {
+    try {
+      const content = await fs.promises.readFile(file, 'utf-8');
+      custom = JSON.parse(content);
+    } catch (err) {
+      console.error('Failed to read custom registries:', err);
+    }
+  }
+
+  custom.push(registry);
+  await fs.promises.writeFile(file, JSON.stringify(custom, null, 2), 'utf-8');
+  return { success: true };
+});
+
+ipcMain.handle('npm-registry:delete', async (_event, url: string) => {
+  const file = getNpmRegistryFile();
+  if (fs.existsSync(file)) {
+    try {
+      const content = await fs.promises.readFile(file, 'utf-8');
+      const custom = JSON.parse(content);
+      const updated = custom.filter((r: { name: string; url: string }) => r.url !== url);
+      await fs.promises.writeFile(file, JSON.stringify(updated, null, 2), 'utf-8');
+    } catch (err) {
+      console.error('Failed to delete custom registry:', err);
+    }
+  }
+  return { success: true };
+});
+
+ipcMain.handle('npm-registry:set', async (_event, url: string) => {
+  try {
+    await execAsync(`npm config set registry ${url}`);
+    return { success: true };
+  } catch (error: unknown) {
+    console.error('Failed to set npm registry:', error);
+    return { success: false, message: error instanceof Error ? error.message : '设置失败' };
+  }
+});
+
+ipcMain.handle('node-env:check-status', async () => {
+  const check = async (cmd: string) => {
+    try {
+      const { stdout } = await execAsync(cmd);
+      return { installed: true, version: stdout.trim() };
+    } catch {
+      return { installed: false, version: null };
+    }
+  };
+
+  const node = await check('node -v');
+  const npm = await check('npm -v');
+  
+  return {
+    node,
+    npm,
+    platform: process.platform,
+    arch: process.arch,
+  };
 });

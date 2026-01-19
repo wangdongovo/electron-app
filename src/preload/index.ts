@@ -16,3 +16,15 @@ contextBridge.exposeInMainWorld('nodeManager', {
     ipcRenderer.invoke('node-manager:activate-version', version),
   setupShell: () => ipcRenderer.invoke('node-manager:setup-shell'),
 });
+
+contextBridge.exposeInMainWorld('npmRegistryManager', {
+  list: () => ipcRenderer.invoke('npm-registry:list'),
+  add: (registry: { name: string; url: string }) =>
+    ipcRenderer.invoke('npm-registry:add', registry),
+  delete: (url: string) => ipcRenderer.invoke('npm-registry:delete', url),
+  set: (url: string) => ipcRenderer.invoke('npm-registry:set', url),
+});
+
+contextBridge.exposeInMainWorld('nodeEnv', {
+  checkStatus: () => ipcRenderer.invoke('node-env:check-status'),
+});

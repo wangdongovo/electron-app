@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Box, Download, RefreshCw, Zap, Search, Terminal, Copy, Check } from 'lucide-react';
+import { Box, Download, RefreshCw, Zap, Search, Terminal, Copy, Check, ShieldCheck, AlertCircle } from 'lucide-react';
+import NpmRegistryManager from './NpmRegistryManager';
 
 interface LocalNodeVersion {
   version: string;
@@ -33,6 +34,14 @@ interface NodeManagerApi {
 declare global {
   interface Window {
     nodeManager: NodeManagerApi;
+    nodeEnv: {
+      checkStatus: () => Promise<{
+        node: { installed: boolean; version: string | null };
+        npm: { installed: boolean; version: string | null };
+        platform: string;
+        arch: string;
+      }>;
+    };
   }
 }
 
@@ -48,9 +57,14 @@ const NodeManager: React.FC = () => {
   const [filter, setFilter] = useState<string>('');
   const [copied, setCopied] = useState(false);
   const [shellSetupStatus, setShellSetupStatus] = useState<string | null>(null);
-  const [packages, setPackages] = useState<PackageManagerPackagesResult[]>([]);
-  const [packagesLoading, setPackagesLoading] = useState(false);
   const [packagesError, setPackagesError] = useState<string | null>(null);
+  const [nodeEnvStatus, setNodeEnvStatus] = useState<{
+    node: { installed: boolean; version: string | null };
+    npm: { installed: boolean; version: string | null };
+    platform: string;
+    arch: string;
+  } | null>(null);
+  const [envLoading, setEnvLoading] = useState(true);
 
   const activeVersion = useMemo(
     () => localVersions.find(v => v.active) || null,
@@ -67,6 +81,18 @@ const NodeManager: React.FC = () => {
       setPackagesError(err?.message ?? '获取包管理器依赖信息失败');
     } finally {
       setPackagesLoading(false);
+    }
+  };
+
+  const checkEnvStatus = async () => {
+    setEnvLoading(true);
+    try {
+      const status = await window.nodeEnv.checkStatus();
+      setNodeEnvStatus(status);
+    } catch (err) {
+      console.error('Failed to check env status:', err);
+    } finally {
+      setEnvLoading(false);
     }
   };
 
@@ -123,6 +149,7 @@ const NodeManager: React.FC = () => {
     refreshLocal();
     refreshRemote();
     loadPackages();
+    checkEnvStatus();
   }, []);
 
   const handleDownload = async (version: string) => {
@@ -163,9 +190,71 @@ const NodeManager: React.FC = () => {
   const isBusy = (version: string) => busyVersion === version;
 
   return (
-    <>
+    <div className="space-y-6 pb-12">
+      {/* Node Environment Detection Banner */}
+      <div className="bg-white border border-zinc-200 rounded-3xl p-6 shadow-sm overflow-hidden relative">
+        <div className="absolute top-0 right-0 p-8 opacity-[0.03] pointer-events-none">
+          <ShieldCheck className="w-32 h-32 text-zinc-900" />
+        </div>
+        
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-6 relative z-10">
+          <div className="flex items-center gap-5">
+            <div className={`p-4 rounded-2xl ${nodeEnvStatus?.node.installed ? 'bg-emerald-50 text-emerald-600' : 'bg-rose-50 text-rose-600'}`}>
+              <ShieldCheck className="w-8 h-8" />
+            </div>
+            <div>
+              <h2 className="text-xl font-bold text-zinc-900 tracking-tight">Node Environment Detect</h2>
+              <p className="text-sm text-zinc-500 mt-0.5">Global runtime availability status</p>
+            </div>
+          </div>
+          
+          <div className="flex items-center gap-4">
+             <div className="flex flex-col items-center px-4 py-2 bg-zinc-50 rounded-2xl border border-zinc-100 min-w-[120px]">
+                <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-widest leading-none mb-1.5">Node.js</span>
+                {envLoading ? (
+                  <div className="h-5 w-12 bg-zinc-200 animate-pulse rounded"></div>
+                ) : (
+                  <span className={`text-sm font-mono font-bold ${nodeEnvStatus?.node.installed ? 'text-zinc-900' : 'text-rose-500'}`}>
+                    {nodeEnvStatus?.node.installed ? nodeEnvStatus.node.version : 'Not Found'}
+                  </span>
+                )}
+             </div>
+             <div className="flex flex-col items-center px-4 py-2 bg-zinc-50 rounded-2xl border border-zinc-100 min-w-[120px]">
+                <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-widest leading-none mb-1.5">NPM</span>
+                {envLoading ? (
+                  <div className="h-5 w-12 bg-zinc-200 animate-pulse rounded"></div>
+                ) : (
+                  <span className={`text-sm font-mono font-bold ${nodeEnvStatus?.npm.installed ? 'text-zinc-900' : 'text-rose-500'}`}>
+                    {nodeEnvStatus?.npm.installed ? `v${nodeEnvStatus.npm.version}` : 'Not Found'}
+                  </span>
+                )}
+             </div>
+             <button 
+                onClick={checkEnvStatus}
+                className="p-3 bg-zinc-900 text-white rounded-2xl hover:bg-zinc-800 transition-all shadow-sm group"
+                title="Refresh Environment Status"
+             >
+                <RefreshCw className={`w-5 h-5 ${envLoading ? 'animate-spin' : 'group-hover:rotate-180 transition-transform duration-500'}`} />
+             </button>
+          </div>
+        </div>
+
+        {!envLoading && !nodeEnvStatus?.node.installed && (
+          <div className="mt-5 flex items-start gap-3 p-4 bg-rose-50 border border-rose-100 rounded-2xl animate-in slide-in-from-top-2">
+            <AlertCircle className="w-5 h-5 text-rose-500 mt-0.5" />
+            <div>
+              <p className="text-sm font-bold text-rose-800">Node.js is not detected on your system.</p>
+              <p className="text-xs text-rose-600 mt-0.5">Please install Node.js to use full functionality of this toolbox. You can use the version manager below to install a managed version.</p>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* NPM Registry Manager */}
+      <NpmRegistryManager />
+
       {/* System Status Banner */}
-      <div className="bg-white border border-zinc-200 rounded-2xl p-4 shadow-sm flex items-center justify-between">
+      <div className="bg-white border border-zinc-200 rounded-3xl p-6 shadow-sm flex items-center justify-between">
         <div className="flex items-center gap-4">
           <div className="p-2 bg-zinc-100 rounded-lg">
             <Zap className="w-5 h-5 text-zinc-600" />
@@ -214,7 +303,7 @@ const NodeManager: React.FC = () => {
         )}
       </div>
 
-      <div className="bg-white border border-zinc-200 rounded-2xl p-4 shadow-sm">
+      <div className="bg-white border border-zinc-200 rounded-3xl p-6 shadow-sm overflow-hidden">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
             <Box className="w-5 h-5 text-zinc-700" />
@@ -333,75 +422,7 @@ const NodeManager: React.FC = () => {
           </table>
         </div>
       </div>
-      <div className="bg-white border border-zinc-200 rounded-2xl p-4 shadow-sm">
-        <div className="flex items-center justify-between mb-3">
-          <div className="flex items-center gap-2">
-            <Box className="w-5 h-5 text-zinc-700" />
-            <h2 className="text-lg font-semibold text-zinc-900">Package Managers (npm / pnpm)</h2>
-          </div>
-          <button
-            type="button"
-            onClick={loadPackages}
-            className="inline-flex items-center gap-1 rounded-md bg-zinc-900 text-white px-3 py-1.5 text-xs hover:bg-zinc-800"
-          >
-            <RefreshCw className="w-3.5 h-3.5" />
-            Reload
-          </button>
-        </div>
-        {packagesError && (
-          <div className="mb-3 border border-rose-200 bg-rose-50 text-rose-700 rounded-lg px-3 py-2 text-xs">
-            {packagesError}
-          </div>
-        )}
-        {packagesLoading ? (
-          <div className="text-xs text-zinc-500">加载 npm / pnpm 依赖信息中…</div>
-        ) : packages.length === 0 ? (
-          <div className="text-xs text-zinc-500">未检测到 npm / pnpm 依赖信息。</div>
-        ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {packages.map(manager => (
-              <div key={manager.manager} className="border border-zinc-200 rounded-xl p-3">
-                <div className="flex items-center justify-between mb-2">
-                  <div className="text-sm font-semibold text-zinc-900">
-                    {manager.manager.toUpperCase()} 全局依赖
-                  </div>
-                  <div className="text-[11px] text-zinc-500">
-                    共 {manager.global.length} 个
-                  </div>
-                </div>
-                <div className="max-h-56 overflow-auto custom-scrollbar">
-                  <table className="min-w-full text-[11px]">
-                    <thead>
-                      <tr className="text-zinc-500 border-b border-zinc-200">
-                        <th className="text-left font-medium py-1 pr-2">Name</th>
-                        <th className="text-left font-medium py-1 pr-2">Version</th>
-                        <th className="text-left font-medium py-1 pr-2">Description</th>
-                        <th className="text-left font-medium py-1 pr-2">Path</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {manager.global.map(pkg => (
-                        <tr key={pkg.name} className="border-t border-zinc-100">
-                          <td className="py-1 pr-2 font-mono text-[11px] text-zinc-900">{pkg.name}</td>
-                          <td className="py-1 pr-2 font-mono text-[11px] text-zinc-800">{pkg.version}</td>
-                          <td className="py-1 pr-2 text-zinc-700 truncate max-w-[140px]">
-                            {pkg.description || '-'}
-                          </td>
-                          <td className="py-1 pr-2 text-zinc-500 truncate max-w-[160px]">
-                            {pkg.path || '-'}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-      
-    </>
+    </div>
   );
 };
 
