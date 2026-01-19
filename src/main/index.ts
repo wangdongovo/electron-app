@@ -7,6 +7,7 @@ import started from 'electron-squirrel-startup';
 
 import { exec, execSync } from 'node:child_process';
 import { promisify } from 'node:util';
+import si from 'systeminformation';
 const execAsync = promisify(exec);
 
 // Fix PATH for macOS/Linux GUI apps to match user's shell
@@ -109,6 +110,50 @@ app.on('activate', () => {
 
 // In this file you can include the rest of your app's specific main process
 // code. You can also put them in separate files and import them here.
+
+ipcMain.handle('get-system-env', async () => {
+  const getVersion = async (cmd: string) => {
+    try {
+      const { stdout } = await execAsync(cmd);
+      return stdout.trim();
+    } catch (err) {
+      return null;
+    }
+  };
+
+  try {
+    const uuid = await si.uuid();
+    const system = await si.system();
+    
+    // Generate a reasonably unique ID if uuid is not available
+    const deviceId = uuid.os || uuid.hardware || system.serial || 'unknown-device';
+
+    const [nodeVersion, gitVersion, mysqlVersion] = await Promise.all([
+      getVersion('node -v'),
+      getVersion('git --version'),
+      getVersion('mysql --version'),
+    ]);
+
+    return {
+      deviceId,
+      software: {
+        node: nodeVersion,
+        git: gitVersion,
+        mysql: mysqlVersion,
+      }
+    };
+  } catch (error) {
+    console.error('Failed to get system env:', error);
+    return {
+      deviceId: 'error',
+      software: {
+        node: null,
+        git: null,
+        mysql: null,
+      }
+    };
+  }
+});
 
 
 ipcMain.handle('uninstall-app', async (_event, appPath: string) => {

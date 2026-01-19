@@ -3,6 +3,7 @@ import { contextBridge, ipcRenderer } from 'electron';
 contextBridge.exposeInMainWorld('electron', {
   uninstallApp: (path: string) => ipcRenderer.invoke('uninstall-app', path),
   getGitInfo: () => ipcRenderer.invoke('get-git-info'),
+  getSystemEnv: () => ipcRenderer.invoke('get-system-env'),
   getPackageManagers: () => ipcRenderer.invoke('package-manager:get-packages'),
 });
 
