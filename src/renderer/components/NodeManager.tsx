@@ -72,16 +72,14 @@ const NodeManager: React.FC = () => {
   );
 
   const loadPackages = async () => {
-    setPackagesLoading(true);
+    
     setPackagesError(null);
     try {
       const list = await window.electron.getPackageManagers();
-      setPackages(list);
+  
     } catch (err: any) {
       setPackagesError(err?.message ?? '获取包管理器依赖信息失败');
-    } finally {
-      setPackagesLoading(false);
-    }
+    } 
   };
 
   const checkEnvStatus = async () => {

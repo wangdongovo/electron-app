@@ -363,6 +363,17 @@ const getNodeBaseDir = () => {
 };
 
 const readActiveNodeVersion = async (baseDir: string) => {
+  // First try to resolve the 'current' symlink as it's the source of truth for the shell
+  const currentLink = path.join(baseDir, 'current');
+  try {
+    const linkPath = await fs.promises.readlink(currentLink);
+    // linkPath might be absolute or relative.
+    // If it's absolute, basename gives the version directory name.
+    return path.basename(linkPath);
+  } catch (error) {
+    // If symlink check fails, fallback to active.json
+  }
+
   const file = path.join(baseDir, 'active.json');
   try {
     const content = await fs.promises.readFile(file, 'utf-8');
@@ -452,13 +463,28 @@ ipcMain.handle('node-manager:get-local-versions', async () => {
     const dir = path.join(baseDir, version);
     let installedAt: number | undefined;
     const metaFile = path.join(dir, 'meta.json');
+    let isValid = false;
+    
+    // Check if version is valid (has meta.json and bin/node)
     try {
       const metaContent = await fs.promises.readFile(metaFile, 'utf-8');
       const meta = JSON.parse(metaContent) as { installedAt?: number };
       installedAt = meta.installedAt;
+      
+      const nodeBin = path.join(dir, 'bin', 'node');
+      if (fs.existsSync(nodeBin)) {
+        isValid = true;
+      }
     } catch (error) {
-      console.error('Failed to read node version meta:', error);
+      // Ignore read errors, treat as invalid
     }
+
+    if (!isValid) {
+      // Optional: Clean up invalid directory? For now just skip it so it shows as "Not Installed"
+      // await fs.promises.rm(dir, { recursive: true, force: true }).catch(() => {});
+      continue;
+    }
+
     result.push({
       version,
       path: dir,
@@ -521,14 +547,25 @@ ipcMain.handle('node-manager:download-version', async (_event, version: string) 
   const tmpDir = path.join(os.tmpdir(), 'node-manager');
   await fs.promises.mkdir(tmpDir, { recursive: true });
   const tmpFile = path.join(tmpDir, filename);
-  await downloadFile(url, tmpFile);
-  await execAsync(`tar -xJf "${tmpFile}" -C "${targetDir}" --strip-components=1`);
-  const metaFile = path.join(targetDir, 'meta.json');
-  await fs.promises.writeFile(
-    metaFile,
-    JSON.stringify({ installedAt: Date.now(), source: url }),
-    'utf-8',
-  );
+  
+  try {
+    await downloadFile(url, tmpFile);
+    await execAsync(`tar -xJf "${tmpFile}" -C "${targetDir}" --strip-components=1`);
+    const metaFile = path.join(targetDir, 'meta.json');
+    await fs.promises.writeFile(
+      metaFile,
+      JSON.stringify({ installedAt: Date.now(), source: url }),
+      'utf-8',
+    );
+  } catch (error) {
+    // Cleanup target directory on failure
+    try {
+      await fs.promises.rm(targetDir, { recursive: true, force: true });
+    } catch (cleanupError) {
+      console.error('Failed to cleanup target dir:', cleanupError);
+    }
+    throw error;
+  }
   return { success: true };
 });
 
@@ -539,6 +576,13 @@ ipcMain.handle('node-manager:activate-version', async (_event, version: string) 
   if (!exists) {
     throw new Error(`版本 ${version} 未安装`);
   }
+  
+  // Verify that the version is valid (has node binary)
+  const nodeBin = path.join(targetDir, 'bin', 'node');
+  if (!fs.existsSync(nodeBin)) {
+    throw new Error(`版本 ${version} 文件损坏，请重新安装`);
+  }
+
   await writeActiveNodeVersion(baseDir, version);
   return { success: true };
 });
