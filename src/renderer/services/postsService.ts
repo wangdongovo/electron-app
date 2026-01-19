@@ -1,6 +1,5 @@
-// src/services/postsService.ts
 import apiClient from './apiClient';
-import { Post } from '../types/post';
+import { Post } from '@shared/types/post';
 
 // 获取所有帖子
 export const getPosts = async (): Promise<Post[]> => {

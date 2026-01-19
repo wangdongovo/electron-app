@@ -7,7 +7,8 @@ export default defineConfig({
     plugins: [react()],
     resolve: {
         alias: [
-            { find: '@', replacement: path.resolve(__dirname, 'src') }
+            { find: '@', replacement: path.resolve(__dirname, 'src/renderer') },
+            { find: '@shared', replacement: path.resolve(__dirname, 'src/shared') }
         ],
     },
     server: {

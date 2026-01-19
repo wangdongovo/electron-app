@@ -163,7 +163,7 @@ const NodeManager: React.FC = () => {
   const isBusy = (version: string) => busyVersion === version;
 
   return (
-    <div className="p-6 space-y-4 bg-zinc-50">
+    <>
       {/* System Status Banner */}
       <div className="bg-white border border-zinc-200 rounded-2xl p-4 shadow-sm flex items-center justify-between">
         <div className="flex items-center gap-4">
@@ -401,7 +401,7 @@ const NodeManager: React.FC = () => {
         )}
       </div>
       
-    </div>
+    </>
   );
 };
 
